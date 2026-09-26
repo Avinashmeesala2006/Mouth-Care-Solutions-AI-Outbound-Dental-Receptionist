@@ -1,0 +1,161 @@
+{
+  "status": "PARTIAL/BLOCKED",
+  "project": {
+    "root": "E:/Mouth_Care_Solutions_Final_Default_Uploaded_Voice/mouth-care-solutions",
+    "call_provider": "twilio",
+    "mock_mode": false,
+    "from_number": "+17372508034",
+    "certification_destination": "+919908552414",
+    "clinic_phone_not_used_as_destination": true
+  },
+  "fish": {
+    "health": "HTTP 200 {\"status\":\"ok\"}",
+    "server_process_count_on_port_8080": 1,
+    "endpoint": "http://127.0.0.1:8080/v1/tts",
+    "version": "v1.5.1",
+    "commit": "58046ea",
+    "controlled_reference_generation": "BLOCKED",
+    "controlled_generation_evidence": "After restarting the single Fish server with CPU float32, the official api_client.py request used the exact reference WAV and approved transcript with max_new_tokens=32, but produced no HTTP response or output WAV. The stale client was stopped; no successful Fish-conditioned output is claimed.",
+    "reference_audio": "fish-references/mouth-care-receptionist-reference-20260919.wav",
+    "reference_audio_verified": true,
+    "reference_format": "44100 Hz mono signed 16-bit PCM WAV",
+    "generation_method": "official v1.5.1 api_client.py with ServeReferenceAudio/ServeTTSRequest, ?format=msgpack",
+    "cpu_precision": "torch.float32"
+  },
+  "voice_pack": {
+    "directory": "artifacts/voice-pack",
+    "required_asset_count": 16,
+    "manifest_valid": true,
+    "hashes_valid": true,
+    "telephone_format": "8000 Hz mono 16-bit signed PCM WAV",
+    "generation_status": "preexisting_asset_unverified",
+    "runtime_source": "voice_pack",
+    "fallback": "generic_help.wav"
+  },
+  "fastapi": {
+    "health": "HTTP 200",
+    "ready": "HTTP 200",
+    "voice_pack_ready": true,
+    "runtime_synchronous_fish_inference": false,
+    "active_main_synthesis_calls": 0
+  },
+  "public_endpoint": {
+    "base": "https://data-colonist-tinker.ngrok-free.dev/demo",
+    "ngrok_target": "http://127.0.0.1:8000",
+    "ready": "HTTP 200",
+    "preflight": "BLOCKED: reference-conditioned Fish generation gate is false",
+    "greeting_audio": "HTTP 200 audio/wav",
+    "followup_audio": "HTTP 200 audio/wav",
+    "valid_signature_followup": "HTTP 200 application/xml with <Play>",
+    "invalid_signature_followup": "HTTP 403"
+  },
+  "twilio_security": {
+    "signature_validation_enabled": true,
+    "active_validator": "twilio.request_validator.RequestValidator",
+    "outbound_validation_url": "https://data-colonist-tinker.ngrok-free.dev/demo/api/telephony/twilio/outbound",
+    "outbound_regression_valid_signature_status": 200,
+    "outbound_regression_invalid_signature_status": 403,
+    "public_url_used_for_signature": true,
+    "production_voice_verb": "Play",
+    "production_voice_verb_not": "Say"
+  },
+  "tests": {
+    "pytest": "103 passed, 1 warning",
+    "compileall": "passed",
+    "frontend_build": "passed",
+    "voice_pack_validator": "passed"
+  },
+  "session_isolation": {
+    "automated_regression": "passed",
+    "real_call": "completed; outbound webhook returned HTTP 403"
+  },
+  "real_call": {
+    "historical_call_sid": "CA73d01c01a354ae407be1074c278b89b9",
+    "new_certification_call_sid": "CA9549251823bf169dcff69951e8851733",
+    "status": "completed",
+    "duration_seconds": 5,
+    "error_code": null,
+    "error_message": null,
+    "from": "+17372508034",
+    "to": "+919908552414",
+    "endpoint": "/api/calls/request",
+    "greeting_asset": "greeting.wav",
+    "greeting_asset_url": "https://data-colonist-tinker.ngrok-free.dev/demo/api/telephony/audio/greeting",
+    "reference_voice_asset_verified": false,
+    "fish_runtime_inference": false,
+    "outbound_webhook_status": 403,
+    "followup_webhook_status": null,
+    "audio_asset_served": false,
+    "reason": "The earlier one call completed, but its outbound webhook returned HTTP 403 before greeting audio was served. The active validator is now fixed and a synthetic public regression returned HTTP 200; no second real call was made."
+  },
+  "latest_direct_call": {
+    "call_sid": "CAf88c797047a6d135a84ba8932bf00df8",
+    "from": "+17372508034",
+    "to": "+919908552414",
+    "twilio_status": "completed",
+    "duration_seconds": 5,
+    "error_code": null,
+    "error_message": null,
+    "outbound_webhook_status": 403,
+    "outbound_signature_present": false,
+    "outbound_validation_url": "https://data-colonist-tinker.ngrok-free.dev/demo/api/telephony/twilio/outbound",
+    "status_callback_status": 200,
+    "greeting_asset": "greeting.wav",
+    "greeting_audio_status": null,
+    "greeting_audio_requested": false,
+    "twiml_uses_play": null,
+    "twiml_uses_say": null,
+    "fish_runtime_inference": false,
+    "retry_performed": false
+  },
+  "inline_twiml_call_attempt": {
+    "call_sid": null,
+    "creation_http_status": 502,
+    "from": "+17372508034",
+    "to": "+919908552414",
+    "inline_twiml_used": true,
+    "initial_outbound_webhook_bypassed": true,
+    "twiml_contains_play": true,
+    "twiml_contains_say": false,
+    "greeting_asset": "greeting.wav",
+    "greeting_audio_requested": false,
+    "fish_runtime_inference": false,
+    "retry_performed": false,
+    "reason": "The single inline-TwiML call creation returned HTTP 502 before Twilio created a Call SID. No new Twilio call appears in the account call list and no new ngrok outbound/audio traffic was observed."
+  },
+  "latest_debug_call_attempt": {
+    "call_sid": null,
+    "creation_http_status": 502,
+    "from": "+17372508034",
+    "to": "+919908552414",
+    "official_twilio_sdk": "twilio 9.11.1 Client.calls.create",
+    "inline_twiml": true,
+    "outbound_webhook_invoked": false,
+    "greeting_audio_requested": false,
+    "retry_performed": false,
+    "provider_exception_details": "Not returned to the HTTP client; backend now logs TwilioRestException type, status, code, message, and more_info without credentials."
+  },
+  "current_call_preflight": {
+    "provider": "twilio",
+    "mock_mode": false,
+    "from_number": "+17372508034",
+    "destination": "+919908552414",
+    "account_authenticated": true,
+    "from_number_authorized": false,
+    "account_type": "Trial",
+    "owned_incoming_phone_numbers": 0,
+    "verified_outgoing_caller_ids": 0,
+    "destination_authorized": false,
+    "public_audio_ready": true,
+    "signature_validation_ready": true,
+    "packaged_audio_runtime_ready": true,
+    "fish_runtime_inference": false,
+    "live_call_allowed": false,
+    "blocker": "from_number_not_authorized_for_account;destination_not_authorized_for_account"
+  },
+  "known_limitations": [
+    "The existing 16 WAV files are telephone-valid and hash-validated but are not certified as newly generated by the Fish HTTP server.",
+    "One direct Twilio call was placed; it completed after the outbound webhook returned HTTP 403 and no audio was served.",
+    "The reproducible sequential HTTP generator is scripts/generate_voice_pack_http.py."
+  ]
+}

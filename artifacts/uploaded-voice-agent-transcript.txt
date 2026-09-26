@@ -1,0 +1,22 @@
+Starting Speech-to-Text conversion...
+Transcribing audio file: /home/ubuntu/mouth-care-repair/mouth-care-solutions/artifacts/uploaded-voice-agent.wav, file size: 0.11 MB
+Transcription may take some time depending on file size and audio length...
+Transcription completed successfully!
+
+TRANSCRIPTION RESULT:
+Total Duration: 7.1 seconds
+Language: eng
+Timestamped segments:
+[00:00.2 - 00:06.6] Now, Care Solutions is open Monday, Saturday, ten AM, eight PM, Sunday closed
+Complete transcription result saved to: /home/ubuntu/mouth-care-repair/mouth-care-solutions/artifacts/uploaded-voice-agent_transcription_20260919_201751.json
+Plain text transcription saved to: /home/ubuntu/mouth-care-repair/mouth-care-solutions/artifacts/uploaded-voice-agent_transcription_20260919_201751.txt
+[2J[H[3Jmanus-speech-to-text /home/ubuntu/mouth-care-repair/mouth-care-solutions/artifacts/uploaded-voice-agent.wav
+Starting Speech-to-Text conversion...
+Transcribing audio file: /home/ubuntu/mouth-care-repair/mouth-care-solutions/artifacts/uploaded-voice-agent.wav, file size: 0.11 MB
+Transcription may take some time depending on file size and audio length...
+
+Snippet of transcribed content:
+[00:00.2 - 00:06.6] Now, Care Solutions is open Monday, Saturday, ten AM, eight PM, Sunday closed
+
+Completed transcription, JSON saved to /home/ubuntu/mouth-care-repair/mouth-care-solutions/artifacts/uploaded-voice-agent_transcription_20260919_201751.json
+Plain text transcription saved to /home/ubuntu/mouth-care-repair/mouth-care-solutions/artifacts/uploaded-voice-agent_transcription_20260919_201751.txt

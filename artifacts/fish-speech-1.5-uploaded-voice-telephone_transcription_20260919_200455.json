@@ -1,0 +1,22 @@
+{
+  "duration": 7.384,
+  "language": "eng",
+  "segments": [
+    {
+      "start": 0.16,
+      "end": 0.54,
+      "text": "Hi."
+    },
+    {
+      "start": 0.54,
+      "end": 4,
+      "text": "Thank you for calling Mouth Care Solutions."
+    },
+    {
+      "start": 4,
+      "end": 7.02,
+      "text": "How can I help you today?"
+    }
+  ],
+  "full_text": "Hi. Thank you for calling Mouth Care Solutions. How can I help you today?"
+}

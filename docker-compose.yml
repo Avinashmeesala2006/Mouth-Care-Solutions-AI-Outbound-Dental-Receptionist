@@ -1,0 +1,68 @@
+services:
+  api:
+    build: .
+    environment:
+      APP_MODE: ${APP_MODE:-demo}
+      MOCK_MODE: ${MOCK_MODE:-true}
+      CALL_PROVIDER: ${CALL_PROVIDER:-mock}
+
+      # Asterisk runs outside this compose file (WSL/Linux host); AMI must stay on a private network.
+      ASTERISK_AMI_HOST: ${ASTERISK_AMI_HOST:-host.docker.internal}
+      ASTERISK_AMI_SECRET: ${ASTERISK_AMI_SECRET:-}
+      ASTERISK_AGI_BIND: ${ASTERISK_AGI_BIND:-0.0.0.0}
+      TELEPHONY_INTERFACE: ${TELEPHONY_INTERFACE:-}
+      OUTBOUND_CALLER_ID: ${OUTBOUND_CALLER_ID:-}
+      OUTBOUND_ALLOWED_DESTINATIONS: ${OUTBOUND_ALLOWED_DESTINATIONS:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      CALL_STATE_DB_PATH: /app/data/call_state.sqlite3
+
+      FISH_SPEECH_ENABLED: ${FISH_SPEECH_ENABLED:-true}
+      FISH_SPEECH_BASE_URL: ${FISH_SPEECH_BASE_URL:-http://fish-speech:8080}
+      FISH_SPEECH_MODEL: ${FISH_SPEECH_MODEL:-fish-speech-1.5}
+      FISH_SPEECH_REFERENCE_AUDIO: ${FISH_SPEECH_REFERENCE_AUDIO:-fish-references/mouth-care-receptionist-reference-20260919.wav}
+      FISH_SPEECH_VOICE_PACK_DIR: ${FISH_SPEECH_VOICE_PACK_DIR:-artifacts/voice-pack}
+
+    volumes:
+      - call-state:/app/data
+    ports:
+      - "8000:8000"
+
+    command: uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips="*"
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+
+  fish-speech:
+    image: fishaudio/fish-speech:latest
+    profiles: [voice]
+    ports:
+      - "${FISH_SPEECH_PORT:-8081}:8080"
+    volumes:
+      - "${FISH_SPEECH_CHECKPOINTS_DIR:-./fish-checkpoints}:/app/checkpoints"
+      - "${FISH_SPEECH_REFERENCES_DIR:-./fish-references}:/app/references"
+    command: ["python", "tools/api_server.py", "--listen", "0.0.0.0:8080", "--device", "${FISH_SPEECH_DEVICE:-cuda}", "--half"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  db:
+    image: postgres:16-alpine
+    profiles:
+      - production
+    environment:
+      POSTGRES_DB: mouthcare
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+
+volumes:
+  call-state:

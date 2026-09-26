@@ -1,0 +1,207 @@
+{
+  "version": "2.1.0",
+  "source": "knowledge/clinic/approved.json",
+  "notes": "Canonical spoken text for every packaged voice asset. Facts must match approved.json; numbers are written in spoken form so Fish Speech pronounces them reliably. 'keywords' are words the ASR transcript must contain for the asset to pass validation.",
+  "prompts": {
+    "greeting": {
+      "text": "Thank you for calling Mouth Care Solutions. How may I help you today?",
+      "keywords": [
+        "thank",
+        "calling",
+        "help"
+      ]
+    },
+    "outbound_greeting": {
+      "text": "Hello, this is the Mouth Care Solutions AI receptionist. How may I help you today?",
+      "keywords": [
+        "hello",
+        "receptionist",
+        "help"
+      ]
+    },
+    "clinic_hours": {
+      "text": "Our clinic is open Monday to Saturday, from ten in the morning to eight in the evening. We are closed on Sundays.",
+      "keywords": [
+        "monday",
+        "saturday",
+        "sunday"
+      ],
+      "required_phrases": [
+        "monday to saturday",
+        [
+          "closed on sundays",
+          "closed on sunday"
+        ]
+      ]
+    },
+    "clinic_address": {
+      "text": "We are located at door number twenty nine, twenty eight, twenty three, Bhavani Complex, Suryaraopeta, Vijayawada, Andhra Pradesh.",
+      "keywords": [
+        "located",
+        "complex",
+        "pradesh"
+      ]
+    },
+    "clinic_phone": {
+      "text": "You can reach Mouth Care Solutions at plus nine one, nine six four two three, four zero six three zero.",
+      "keywords": [
+        "reach",
+        "solutions"
+      ]
+    },
+    "clinic_email": {
+      "text": "Our email address is mouth care solutions, all one word, at gmail dot com.",
+      "keywords": [
+        "mail",
+        "solutions",
+        "word"
+      ],
+      "required_phrases": [
+        [
+          "gmail",
+          "g mail",
+          "gee mail"
+        ]
+      ]
+    },
+    "services": {
+      "text": "We provide preventive, restorative, cosmetic, orthodontic, endodontic, prosthodontic, pediatric, oral surgery, and emergency dental care.",
+      "keywords": [
+        "preventive",
+        "cosmetic",
+        "emergency"
+      ]
+    },
+    "emergency_care": {
+      "text": "If there is severe pain, uncontrolled bleeding, facial swelling affecting breathing or swallowing, or a dental injury, seek urgent medical care. This receptionist cannot diagnose.",
+      "keywords": [
+        "pain",
+        "bleeding",
+        "urgent",
+        "diagnose"
+      ],
+      "required_phrases": [
+        "breathing or swallowing",
+        "cannot diagnose",
+        "urgent medical care"
+      ]
+    },
+    "appointment_request": {
+      "text": "I can help you request an appointment. What date would you prefer?",
+      "keywords": [
+        "appointment",
+        "date"
+      ]
+    },
+    "ask_preferred_date": {
+      "text": "What date would you prefer?",
+      "keywords": [
+        "date",
+        "prefer"
+      ]
+    },
+    "ask_preferred_time": {
+      "text": "What time would work best for you?",
+      "keywords": [
+        "time",
+        "work"
+      ]
+    },
+    "ask_patient_name": {
+      "text": "May I have the patient's name, please?",
+      "keywords": [
+        "name"
+      ]
+    },
+    "ask_reason_for_visit": {
+      "text": "What is the reason for your visit?",
+      "keywords": [
+        "reason",
+        "visit"
+      ]
+    },
+    "confirm_appointment": {
+      "text": "Would you like me to send this appointment request to the clinic team? Please say yes or no.",
+      "keywords": [
+        "appointment",
+        "yes"
+      ]
+    },
+    "appointment_recorded": {
+      "text": "Thank you. Your appointment request has been noted. The clinic team will call you to confirm the date and time.",
+      "keywords": [
+        "request",
+        "noted",
+        "confirm"
+      ],
+      "required_phrases": [
+        "clinic team will call you"
+      ]
+    },
+    "appointment_declined": {
+      "text": "No problem. I have not sent the request.",
+      "keywords": [
+        "problem",
+        "request"
+      ]
+    },
+    "unsupported_question": {
+      "text": "I'm sorry, I don't have approved information about that. I will ask the clinic team to call you back.",
+      "keywords": [
+        "sorry",
+        "information",
+        "call"
+      ],
+      "required_phrases": [
+        [
+          "don't have approved information",
+          "do not have approved information"
+        ]
+      ]
+    },
+    "callback_noted": {
+      "text": "Of course. I will ask the clinic team to call you back.",
+      "keywords": [
+        "course",
+        "clinic",
+        "team",
+        "call"
+      ],
+      "validation_version": 1
+    },
+    "anything_else": {
+      "text": "Is there anything else I can help you with?",
+      "keywords": [
+        "anything",
+        "else",
+        "help"
+      ]
+    },
+    "repeat_or_not_understood": {
+      "text": "I'm sorry, I did not quite catch that. Could you please say it again?",
+      "keywords": [
+        "sorry",
+        "again"
+      ]
+    },
+    "generic_help": {
+      "text": "I can help with clinic hours, our address, our services, emergencies, or an appointment request. What would you like to know?",
+      "keywords": [
+        "help",
+        "appointment",
+        "know"
+      ],
+      "required_phrases": [
+        "clinic hours",
+        "address"
+      ]
+    },
+    "goodbye": {
+      "text": "Thank you for speaking with Mouth Care Solutions. Goodbye.",
+      "keywords": [
+        "thank",
+        "goodbye"
+      ]
+    }
+  }
+}

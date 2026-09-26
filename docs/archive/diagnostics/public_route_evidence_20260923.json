@@ -1,0 +1,251 @@
+{
+  "public_url": "https://data-colonist-tinker.ngrok-free.dev/demo",
+  "tunnel": {
+    "status": 200,
+    "content_type": "application/json",
+    "body": "{\"tunnels\":[{\"name\":\"command_line\",\"ID\":\"82ea4d11b7ae7dd331d967889353ac22\",\"uri\":\"/api/tunnels/command_line\",\"public_url\":\"https://data-colonist-tinker.ngrok-free.dev/demo\",\"proto\":\"https\",\"config\":{\"addr\":\"http://127.0.0.1:8000\",\"inspect\":true},\"metrics\":{\"conns\":{\"count\":16,\"gauge\":0,\"rate1\":0.13030885943820214,\"rate5\":0.045439971801201774,\"rate15\":0.01683700441557703,\"p50\":5008483850,\"p90\":5020936480,\"p95\":5025857900,\"p99\":5025857900},\"http\":{\"count\":16,\"rate1\":0.11988993830283547,\"rate5\":0.044688",
+    "bytes": 625
+  },
+  "registered_routes": {
+    "/api/telephony/audio/{audio_id}": [
+      "GET"
+    ],
+    "/api/telephony/twilio/status": [
+      "POST"
+    ],
+    "/api/telephony/twilio/voice": [
+      "POST"
+    ],
+    "/api/telephony/twilio/outbound": [
+      "POST"
+    ]
+  },
+  "audio_id": "appointment_request",
+  "local": {
+    "health": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"status\":\"ok\",\"mode\":\"live\"}",
+      "bytes": 29
+    },
+    "outbound": {
+      "status": 200,
+      "content_type": "application/xml",
+      "body": "<Response><Play>https://data-colonist-tinker.ngrok-free.dev/demo/api/telephony/audio/fish-speech-greeting</Play><Gather input=\"speech\" action=\"https://data-colonist-tinker.ngrok-free.dev/demo/api/telephony/twilio/voice\" method=\"POST\" speechTimeout=\"auto\" actionOnEmptyResult=\"true\" timeout=\"15\"></Gather></Response>",
+      "bytes": 305
+    },
+    "voice": {
+      "status": 200,
+      "content_type": "application/xml",
+      "body": "<Response><Play>https://data-colonist-tinker.ngrok-free.dev/demo/api/telephony/audio/clinic_hours</Play><Gather input=\"speech\" action=\"https://data-colonist-tinker.ngrok-free.dev/demo/api/telephony/twilio/voice\" method=\"POST\" speechTimeout=\"auto\" actionOnEmptyResult=\"true\" timeout=\"15\"></Gather></Response>",
+      "bytes": 297
+    },
+    "status": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"received\":true,\"status\":\"completed\"}",
+      "bytes": 38
+    },
+    "audio": {
+      "status": 200,
+      "content_type": "audio/wav",
+      "body": "RIFF@Z\u0000\u0000WAVEfmt \u0010\u0000\u0000\u0000\u0001\u0000\u0001\u0000@\u001f\u0000\u0000\ufffd>\u0000\u0000\u0002\u0000\u0010\u0000LIST\u001a\u0000\u0000\u0000INFOISFT\r\u0000\u0000\u0000Lavf63.1.101\u0000\u0000data\ufffdY\u0000\u0000\ufffd\ufffd\ufffd\ufffd#\u0000'\u0000\ufffd\ufffdy\ufffd=\ufffdi\ufffd\u000f\u0000i\u0000\ufffd\u0000\ufffd\u0000\ufffd\ufffd\ufffd\ufffdc\ufffd%\ufffd\u0011\ufffdF\ufffdW\ufffd]\ufffd|\ufffdH\ufffd\r\ufffd\ufffd\ufffd\ufffd\ufffd\u0012\ufffdY\ufffds\ufffd|\ufffd\ufffd\ufffdd\ufffd=\ufffd1\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\u001d\u0000\u001e\u0000\ufffd\ufffd\ufffd\ufffd\ufffd\ufffdL\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000j\u0000L\u0000I\u0000W\u0000x\u0000X\u0000E\u0000C\u0000D\u0000<\u00008\u0000\u001d\u0000\u0016\u0000H\u0000L\u0000O\u0000N\u00000\u00009\u0000?\u0000j\u0000m\u0000;\u0000\ufffd\ufffdF\ufffd\ufffd\ufffdW\ufffd\u007f\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffdG\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\u0013\u0000#\u00006\u00003\u0000I\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000P\u00001\u00002\u0000$\u0000E\u0000A\u0000\"\u0000\ufffd\ufffd\ufffd\ufffdr\ufffdM\ufffd^\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd_\ufffdj\ufffd\ufffd\ufffdk\ufffd\ufffd\ufffd\u0014\u0000^\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000j\u0000*\u0000\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd!\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000y\u0000r\u0000G\u0000\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd'\u0000\u001e\u0000\ufffd\ufffd\ufffd\ufffd\u001c\u0000=\u0000V\u0000\u0019\u0000\ufffd\ufffdX\ufffdD\ufffd&\ufffd3\ufffdQ\ufffdT\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\u001e\u0000a\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000\ufffd\u00000\u00004\u00006\u0000,\u0000a\u0000e\u0000,\u0000\ufffd\ufffd\ufffd\ufffdw\ufffd\ufffd\ufffd\ufffd\ufffdw\ufffdY\ufffdo\ufffdG\ufffdE\ufffdY\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\u0004\u0000\u001d\u0000\u001a\u00008\u0000g\u0000]\u0000\u001e\u0000\ufffd\ufffd\u0000\u0000\u001e\u0000(\u0000@\u0000[\u0000",
+      "bytes": 23112
+    },
+    "status_endpoint": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"mode\":\"live\",\"voice\":\"fish-speech\",\"telephony\":\"twilio\",\"clinic_phone\":\"+91 96423 40630\"}",
+      "bytes": 91
+    },
+    "ready": {
+      "status": 503,
+      "content_type": "application/json",
+      "body": "{\"detail\":{\"status\":\"not_ready\",\"missing_configuration\":[\"LLM_API_KEY or OPENAI_API_KEY\",\"ADMIN_INITIAL_EMAIL and ADMIN_INITIAL_PASSWORD\",\"LIVE_POSTGRES_BOOKING_REPOSITORY\"]}}",
+      "bytes": 175
+    }
+  },
+  "public": {
+    "outbound": {
+      "status": 200,
+      "content_type": "application/xml",
+      "body": "<Response><Play>https://data-colonist-tinker.ngrok-free.dev/demo/api/telephony/audio/fish-speech-greeting</Play><Gather input=\"speech\" action=\"https://data-colonist-tinker.ngrok-free.dev/demo/api/telephony/twilio/voice\" method=\"POST\" speechTimeout=\"auto\" actionOnEmptyResult=\"true\" timeout=\"15\"></Gather></Response>",
+      "bytes": 305
+    },
+    "voice": {
+      "status": 200,
+      "content_type": "application/xml",
+      "body": "<Response><Play>https://data-colonist-tinker.ngrok-free.dev/demo/api/telephony/audio/clinic_hours</Play><Gather input=\"speech\" action=\"https://data-colonist-tinker.ngrok-free.dev/demo/api/telephony/twilio/voice\" method=\"POST\" speechTimeout=\"auto\" actionOnEmptyResult=\"true\" timeout=\"15\"></Gather></Response>",
+      "bytes": 297
+    },
+    "status": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"received\":true,\"status\":\"completed\"}",
+      "bytes": 38
+    },
+    "audio": {
+      "status": 200,
+      "content_type": "audio/wav",
+      "body": "RIFF@Z\u0000\u0000WAVEfmt \u0010\u0000\u0000\u0000\u0001\u0000\u0001\u0000@\u001f\u0000\u0000\ufffd>\u0000\u0000\u0002\u0000\u0010\u0000LIST\u001a\u0000\u0000\u0000INFOISFT\r\u0000\u0000\u0000Lavf63.1.101\u0000\u0000data\ufffdY\u0000\u0000\ufffd\ufffd\ufffd\ufffd#\u0000'\u0000\ufffd\ufffdy\ufffd=\ufffdi\ufffd\u000f\u0000i\u0000\ufffd\u0000\ufffd\u0000\ufffd\ufffd\ufffd\ufffdc\ufffd%\ufffd\u0011\ufffdF\ufffdW\ufffd]\ufffd|\ufffdH\ufffd\r\ufffd\ufffd\ufffd\ufffd\ufffd\u0012\ufffdY\ufffds\ufffd|\ufffd\ufffd\ufffdd\ufffd=\ufffd1\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\u001d\u0000\u001e\u0000\ufffd\ufffd\ufffd\ufffd\ufffd\ufffdL\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000j\u0000L\u0000I\u0000W\u0000x\u0000X\u0000E\u0000C\u0000D\u0000<\u00008\u0000\u001d\u0000\u0016\u0000H\u0000L\u0000O\u0000N\u00000\u00009\u0000?\u0000j\u0000m\u0000;\u0000\ufffd\ufffdF\ufffd\ufffd\ufffdW\ufffd\u007f\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffdG\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\u0013\u0000#\u00006\u00003\u0000I\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000P\u00001\u00002\u0000$\u0000E\u0000A\u0000\"\u0000\ufffd\ufffd\ufffd\ufffdr\ufffdM\ufffd^\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd_\ufffdj\ufffd\ufffd\ufffdk\ufffd\ufffd\ufffd\u0014\u0000^\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000j\u0000*\u0000\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd!\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000y\u0000r\u0000G\u0000\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd'\u0000\u001e\u0000\ufffd\ufffd\ufffd\ufffd\u001c\u0000=\u0000V\u0000\u0019\u0000\ufffd\ufffdX\ufffdD\ufffd&\ufffd3\ufffdQ\ufffdT\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\u001e\u0000a\u0000\ufffd\u0000\ufffd\u0000\ufffd\u0000\ufffd\u00000\u00004\u00006\u0000,\u0000a\u0000e\u0000,\u0000\ufffd\ufffd\ufffd\ufffdw\ufffd\ufffd\ufffd\ufffd\ufffdw\ufffdY\ufffdo\ufffdG\ufffdE\ufffdY\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\u0004\u0000\u001d\u0000\u001a\u00008\u0000g\u0000]\u0000\u001e\u0000\ufffd\ufffd\u0000\u0000\u001e\u0000(\u0000@\u0000[\u0000",
+      "bytes": 23112
+    },
+    "root": {
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "body": "<meta http-equiv=\"refresh\" content=\"0; url=/demo\"><a href=\"/demo\">Open Mouth Care Solutions receptionist demo</a>",
+      "bytes": 113
+    },
+    "health": {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"status\":\"ok\",\"mode\":\"live\"}",
+      "bytes": 29
+    }
+  },
+  "inspector": {
+    "outbound": [
+      {
+        "method": "POST",
+        "uri": "/api/telephony/twilio/outbound",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "uri": "/api/telephony/twilio/outbound",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "uri": "/api/telephony/twilio/outbound",
+        "status": 200
+      }
+    ],
+    "voice": [
+      {
+        "method": "POST",
+        "uri": "/api/telephony/twilio/voice",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "uri": "/api/telephony/twilio/voice",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "uri": "/api/telephony/twilio/voice",
+        "status": 200
+      }
+    ],
+    "status": [
+      {
+        "method": "POST",
+        "uri": "/api/telephony/twilio/status",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "uri": "/api/telephony/twilio/status",
+        "status": 403
+      },
+      {
+        "method": "POST",
+        "uri": "/api/telephony/twilio/status",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "uri": "/api/telephony/twilio/status",
+        "status": 403
+      },
+      {
+        "method": "POST",
+        "uri": "/api/telephony/twilio/status",
+        "status": 200
+      }
+    ],
+    "audio": [
+      {
+        "method": "GET",
+        "uri": "/api/telephony/audio/appointment_request",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "uri": "/api/telephony/audio/appointment_request",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "uri": "/api/telephony/audio/appointment_request",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "uri": "/api/telephony/audio/appointment_request",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "uri": "/api/telephony/audio/appointment_request",
+        "status": 200
+      }
+    ],
+    "root": [
+      {
+        "method": "GET",
+        "uri": "/",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "uri": "/api/telephony/audio/appointment_request",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "uri": "/health",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "uri": "/",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "uri": "/api/telephony/audio/appointment_request",
+        "status": 200
+      }
+    ],
+    "health": [
+      {
+        "method": "GET",
+        "uri": "/health",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "uri": "/health",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "uri": "/health",
+        "status": 200
+      }
+    ]
+  },
+  "signature_valid": true,
+  "signature_invalid_reject": true,
+  "public_audio": {
+    "status": 200,
+    "content_type": "audio/wav",
+    "format": "NONE",
+    "sample_width": 2,
+    "channels": 1,
+    "sample_rate": 8000,
+    "frames": 11517
+  }
+}

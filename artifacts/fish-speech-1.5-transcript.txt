@@ -1,0 +1,24 @@
+Starting Speech-to-Text conversion...
+Transcribing audio file: /home/ubuntu/mouth-care-repair/mouth-care-solutions/artifacts/fish-speech-1.5-receptionist.wav, file size: 0.32 MB
+Transcription may take some time depending on file size and audio length...
+Transcription completed successfully!
+
+TRANSCRIPTION RESULT:
+Total Duration: 3.9 seconds
+Language: eng
+Timestamped segments:
+[00:00.2 - 00:02.8] Hi, thank you for calling Mouth Care Solutions.
+[00:02.8 - 00:03.8] How can I help you today?
+Complete transcription result saved to: /home/ubuntu/mouth-care-repair/mouth-care-solutions/artifacts/fish-speech-1.5-receptionist_transcription_20260919_192325.json
+Plain text transcription saved to: /home/ubuntu/mouth-care-repair/mouth-care-solutions/artifacts/fish-speech-1.5-receptionist_transcription_20260919_192325.txt
+[2J[H[3Jmanus-speech-to-text /home/ubuntu/mouth-care-repair/mouth-care-solutions/artifacts/fish-speech-1.5-receptionist.wav
+Starting Speech-to-Text conversion...
+Transcribing audio file: /home/ubuntu/mouth-care-repair/mouth-care-solutions/artifacts/fish-speech-1.5-receptionist.wav, file size: 0.32 MB
+Transcription may take some time depending on file size and audio length...
+
+Snippet of transcribed content:
+[00:00.2 - 00:02.8] Hi, thank you for calling Mouth Care Solutions.
+[00:02.8 - 00:03.8] How can I help you today?
+
+Completed transcription, JSON saved to /home/ubuntu/mouth-care-repair/mouth-care-solutions/artifacts/fish-speech-1.5-receptionist_transcription_20260919_192325.json
+Plain text transcription saved to /home/ubuntu/mouth-care-repair/mouth-care-solutions/artifacts/fish-speech-1.5-receptionist_transcription_20260919_192325.txt

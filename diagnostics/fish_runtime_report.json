@@ -1,0 +1,11 @@
+{
+  "reference_tts": true,
+  "reference_wav_valid": true,
+  "reference_elapsed_seconds": 593.1636615999741,
+  "output_path": "diagnostics\\fish_reference_direct.wav",
+  "sample_rate": 44100,
+  "channels": 1,
+  "sample_width": 2,
+  "frames": 192512,
+  "duration": 4.365351473922902
+}

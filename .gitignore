@@ -1,0 +1,31 @@
+# Python
+.venv/
+.venv-*/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Secrets: every env file except the placeholder template
+.env
+.env.*
+!.env.example
+
+# Frontend
+node_modules/
+dist/
+
+# Runtime state, logs and generation scratch
+*.log
+data/
+diagnostics/runtime/
+artifacts/voice-pack-staging/
+*.bak
+
+# Rendered Asterisk configuration (contains the AMI secret / SIP password)
+telephony/asterisk/generated/
+
+# Private keys and certificates (Vonage application private key, TLS material)
+*.key
+*.pem
+private.key
+.vite/

@@ -1,1 +1,0 @@
-<Response><Gather input="speech dtmf" action="http://127.0.0.1:8012/api/telephony/twilio/voice" method="POST" speechTimeout="auto" timeout="5"><Play>http://127.0.0.1:8012/api/telephony/audio/89771cccbd754da8a0b76fb06117cc55</Play></Gather><Hangup/></Response>

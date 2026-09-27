@@ -1,9 +1,18 @@
+# Runtime dependencies (development/test tools: requirements-dev.txt)
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 pydantic-settings==2.7.1
-pytest==8.3.4
-httpx==0.28.1
 python-multipart==0.0.20
+httpx==0.28.1
+
+# Telephony uses Twilio's HTTPS Voice API through the existing httpx transport.
+
+# PostgreSQL
+psycopg[binary]==3.3.6
+psycopg-pool==3.3.3
+
+# Voice: Fish Speech client (msgpack API) and audio conversion.
+# Caller speech is recognised by Twilio <Gather>; there is no in-process speech recognition.
 ormsgpack==1.12.2
 numpy>=1.26
-faster-whisper>=1.1
+soxr==1.1.0

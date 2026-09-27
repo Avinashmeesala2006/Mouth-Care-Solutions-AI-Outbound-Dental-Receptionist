@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
-from backend.app.main import app, repo
+
+from backend.app.main import app
+
 client=TestClient(app)
 def test_facts():
  r=client.post('/api/agent/session',json={'message':'What are your hours?'}); assert 'Monday-Saturday' in r.json()['text']

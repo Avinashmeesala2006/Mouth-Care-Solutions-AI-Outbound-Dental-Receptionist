@@ -1,5 +1,5 @@
 import re
-from .repository import Repo
+
 from backend.app.core.config import APPROVED_FACTS
 
 CLINIC = {'name':APPROVED_FACTS['name'],'address':APPROVED_FACTS['address'],'phone':APPROVED_FACTS['phone'],'email':APPROVED_FACTS['email'],'hours':APPROVED_FACTS['hours']}

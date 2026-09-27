@@ -1,33 +1,64 @@
+# Mouth Care Solutions AI Receptionist: FastAPI (Twilio + Fish Speech), PostgreSQL, web client.
+#
+#   docker compose up --build                      # api + db + frontend (Fish Speech on the host)
+#   docker compose --profile voice up --build      # also run Fish Speech 1.5.1 in a GPU container
+#
+# Fish Speech is private: it is reachable only on the compose network (never published).
+# The verified development deployment runs Fish Speech 1.5.1 on the host (scripts/run_fish_speech.ps1);
+# point FISH_SPEECH_BASE_URL at it with http://host.docker.internal:8080.
 services:
   api:
     build: .
     environment:
-      APP_MODE: ${APP_MODE:-demo}
-      MOCK_MODE: ${MOCK_MODE:-true}
-      CALL_PROVIDER: ${CALL_PROVIDER:-mock}
-
-      # Asterisk runs outside this compose file (WSL/Linux host); AMI must stay on a private network.
-      ASTERISK_AMI_HOST: ${ASTERISK_AMI_HOST:-host.docker.internal}
-      ASTERISK_AMI_SECRET: ${ASTERISK_AMI_SECRET:-}
-      ASTERISK_AGI_BIND: ${ASTERISK_AGI_BIND:-0.0.0.0}
-      TELEPHONY_INTERFACE: ${TELEPHONY_INTERFACE:-}
-      OUTBOUND_CALLER_ID: ${OUTBOUND_CALLER_ID:-}
-      OUTBOUND_ALLOWED_DESTINATIONS: ${OUTBOUND_ALLOWED_DESTINATIONS:-}
+      APP_MODE: ${APP_MODE:-development}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
-      CALL_STATE_DB_PATH: /app/data/call_state.sqlite3
+      JWT_SECRET: ${JWT_SECRET:-}
+      ADMIN_INITIAL_EMAIL: ${ADMIN_INITIAL_EMAIL:-}
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-}
 
-      FISH_SPEECH_ENABLED: ${FISH_SPEECH_ENABLED:-true}
-      FISH_SPEECH_BASE_URL: ${FISH_SPEECH_BASE_URL:-http://fish-speech:8080}
-      FISH_SPEECH_MODEL: ${FISH_SPEECH_MODEL:-fish-speech-1.5}
+      DATABASE_URL: postgresql://mouthcare:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/mouthcare
+
+      TWILIO_ENABLED: ${TWILIO_ENABLED:-false}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-}
+      TWILIO_VALIDATE_SIGNATURE: ${TWILIO_VALIDATE_SIGNATURE:-true}
+
+      SERVICE_QUOTA_SECONDS: ${SERVICE_QUOTA_SECONDS:-180000}
+      MAX_CONCURRENT_APP_CALLS: ${MAX_CONCURRENT_APP_CALLS:-5}
+
+      FISH_SPEECH_ENABLED: "true"
+      FISH_SPEECH_BASE_URL: ${FISH_SPEECH_BASE_URL:-http://host.docker.internal:8080}
+      FISH_SPEECH_MODEL: fish-speech-1.5
+      FISH_SPEECH_VERSION: v1.5.1
       FISH_SPEECH_REFERENCE_AUDIO: ${FISH_SPEECH_REFERENCE_AUDIO:-fish-references/mouth-care-receptionist-reference-20260919.wav}
-      FISH_SPEECH_VOICE_PACK_DIR: ${FISH_SPEECH_VOICE_PACK_DIR:-artifacts/voice-pack}
-
+      FISH_SPEECH_REFERENCE_TEXT: ${FISH_SPEECH_REFERENCE_TEXT:-}
+      FISH_SPEECH_VOICE_PACK_DIR: artifacts/voice-pack
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      - call-state:/app/data
+      - tts-cache:/app/artifacts/tts-cache
     ports:
       - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    # Migrations run first; the API does not start on a failed migration.
+    command: sh -c "python -m backend.app.db.migrations && uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"
 
-    command: uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips="*"
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: mouthcare
+      POSTGRES_USER: mouthcare
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mouthcare -d mouthcare"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   frontend:
     build: ./frontend
@@ -37,14 +68,14 @@ services:
       - "8080:80"
 
   fish-speech:
-    image: fishaudio/fish-speech:latest
+    image: fishaudio/fish-speech:v1.5.1        # the installed/verified release; checkpoints are baked in
     profiles: [voice]
-    ports:
-      - "${FISH_SPEECH_PORT:-8081}:8080"
-    volumes:
-      - "${FISH_SPEECH_CHECKPOINTS_DIR:-./fish-checkpoints}:/app/checkpoints"
-      - "${FISH_SPEECH_REFERENCES_DIR:-./fish-references}:/app/references"
-    command: ["python", "tools/api_server.py", "--listen", "0.0.0.0:8080", "--device", "${FISH_SPEECH_DEVICE:-cuda}", "--half"]
+    expose:
+      - "8080"
+    command: ["python", "tools/api_server.py", "--listen", "0.0.0.0:8080", "--device", "${FISH_SPEECH_DEVICE:-cuda}",
+              "--llama-checkpoint-path", "checkpoints/fish-speech-1.5",
+              "--decoder-checkpoint-path", "checkpoints/fish-speech-1.5/firefly-gan-vq-fsq-8x1024-21hz-generator.pth",
+              "--decoder-config-name", "firefly_gan_vq", "--workers", "1", "--half"]
     deploy:
       resources:
         reservations:
@@ -53,16 +84,6 @@ services:
               count: all
               capabilities: [gpu]
 
-  db:
-    image: postgres:16-alpine
-    profiles:
-      - production
-    environment:
-      POSTGRES_DB: mouthcare
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
-
 volumes:
-  call-state:
+  pgdata:
+  tts-cache:

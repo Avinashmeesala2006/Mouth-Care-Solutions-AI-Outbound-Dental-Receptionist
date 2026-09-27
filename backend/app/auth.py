@@ -1,4 +1,8 @@
-import base64, hashlib, hmac, os, time
+import base64
+import hashlib
+import hmac
+import os
+
 
 def hash_password(password: str) -> str:
  salt=os.urandom(16); digest=hashlib.pbkdf2_hmac('sha256',password.encode(),salt,210000); return 'pbkdf2$'+base64.urlsafe_b64encode(salt).decode()+'$'+base64.urlsafe_b64encode(digest).decode()

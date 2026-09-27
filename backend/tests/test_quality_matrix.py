@@ -1,10 +1,11 @@
 import pytest
 from fastapi.testclient import TestClient
+
+from backend.app.adapters.providers import MockNotificationProvider
+from backend.app.db.postgres import PostgresCallRepository
 from backend.app.main import app
 from backend.app.services.engine import Policy
-from backend.app.services.usage import UsageMeter
-from backend.app.adapters.providers import MockVoiceProvider, MockNotificationProvider, MockTelephonyProvider
-from backend.app.adapters.postgres import PostgresRepository
+from backend.app.services.usage import threshold_label
 
 client=TestClient(app)
 
@@ -20,11 +21,10 @@ def test_policy_grounding_matrix(question, expected):
         answer=client.post('/api/agent/session',json={'message':question}).json()['text']
     assert expected.lower() in answer.lower()
 
-@pytest.mark.parametrize('value', [0,1,30,299,300,301,600,1499,1500,1501,2099,2100,2549,2550,2849,2850,2999,3000,3001])
-def test_usage_boundary_values(value):
-    result=UsageMeter().record(value)
-    assert result['minutes']==value
-    assert result['billable_calling_allowed'] == (value < 3000)
+@pytest.mark.parametrize('percent,label', [(0,'below_70%'),(69.99,'below_70%'),(70,'70%'),(84.9,'70%'),(85,'85%'),
+                                           (94.99,'85%'),(95,'95%'),(99.9,'95%'),(100,'100%'),(130,'100%')])
+def test_quota_threshold_boundaries(percent, label):
+    assert threshold_label(percent) == label
 
 @pytest.mark.parametrize('method,path', [
  ('get','/health'),('get','/ready'),('get','/api/slots'),('get','/api/usage'),
@@ -33,15 +33,13 @@ def test_endpoint_validation_matrix(method,path):
     response=client.post(path,json={}) if method=='post' else client.get(path)
     assert response.status_code in {200,400,422}
 
-@pytest.mark.parametrize('factory,method,args', [
- (MockVoiceProvider,'start_session',('s',)),(MockVoiceProvider,'stop_session',('s',)),(MockVoiceProvider,'synthesize',('hello',)),(MockVoiceProvider,'usage_event',(1,)),
- (MockNotificationProvider,'send',('email','x','hello')),(MockTelephonyProvider,'inbound_call',('CA1',)),(MockTelephonyProvider,'transfer',('CA1','human'))])
-def test_mock_provider_contracts(factory,method,args):
-    result=getattr(factory(),method)(*args)
-    assert isinstance(result,dict) and 'status' in result or 'provider' in result
+def test_notification_seam_contract():
+    result=MockNotificationProvider().send('email','x','hello')
+    assert result['status']=='queued' and result['provider']=='mock'
 
 def test_postgres_health_fails_closed_without_network():
-    assert PostgresRepository('postgresql://invalid:5432/nope').health() is False
+    repo=PostgresCallRepository('postgresql://nobody:nothing@127.0.0.1:1/nope', open_timeout=2)
+    assert repo.healthy() is False
 
 @pytest.mark.parametrize('bad_json', [{'message':''},{'message':'x'*2001},{'message':None}])
 def test_input_schema_rejects_invalid_agent_messages(bad_json):

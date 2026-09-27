@@ -1,4 +1,11 @@
-CREATE EXTENSION IF NOT EXISTS vector;
+-- pgvector is optional: stock PostgreSQL builds (Windows binaries, postgres:*-alpine) do not
+-- ship it. The embedding column is added only where the extension is available.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'vector') THEN
+    CREATE EXTENSION IF NOT EXISTS vector;
+  END IF;
+END $$;
 CREATE TABLE clinic_config (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE TABLE patients (id UUID PRIMARY KEY, name TEXT, phone TEXT, email TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE TABLE services (id TEXT PRIMARY KEY, name TEXT NOT NULL, approved BOOLEAN NOT NULL DEFAULT FALSE);
@@ -8,7 +15,13 @@ CREATE TABLE booking_holds (token TEXT PRIMARY KEY, slot_key TEXT UNIQUE NOT NUL
 CREATE TABLE conversations (id UUID PRIMARY KEY, channel TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE TABLE messages (id UUID PRIMARY KEY, conversation_id UUID REFERENCES conversations ON DELETE CASCADE, role TEXT, content TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE TABLE knowledge_documents (id UUID PRIMARY KEY, source TEXT, version TEXT, approval_status TEXT, effective_date DATE, locale TEXT);
-CREATE TABLE knowledge_chunks (id UUID PRIMARY KEY, document_id UUID REFERENCES knowledge_documents ON DELETE CASCADE, content TEXT, category TEXT, embedding vector(1536));
+CREATE TABLE knowledge_chunks (id UUID PRIMARY KEY, document_id UUID REFERENCES knowledge_documents ON DELETE CASCADE, content TEXT, category TEXT);
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
+    EXECUTE 'ALTER TABLE knowledge_chunks ADD COLUMN embedding vector(1536)';
+  END IF;
+END $$;
 CREATE TABLE usage_events (id UUID PRIMARY KEY, channel TEXT, provider TEXT, session_type TEXT, duration_seconds INT, billable_minutes NUMERIC, estimated_cost NUMERIC, outcome TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE TABLE admin_users (id UUID PRIMARY KEY, email TEXT UNIQUE, role TEXT NOT NULL);
 CREATE TABLE audit_events (id UUID PRIMARY KEY, entity_type TEXT, entity_id TEXT, event_type TEXT, payload JSONB, created_at TIMESTAMPTZ NOT NULL DEFAULT now());

@@ -1,5 +1,5 @@
 // Maps /api/calls/request and /api/callback outcomes and /api/status readiness to patient-facing text.
-// Never claims a call is connected unless the backend returned a real call id from the phone system.
+// Never claims a call is connected unless the backend returned a real provider call id.
 export const NOW_WINDOW = 'Now (AI receptionist call)'
 
 export function callRequestTarget(window) {
@@ -24,7 +24,7 @@ export function runtimeStatusMessage({ backend, mode, provider, preflight }) {
   return parts.join(' · ')
 }
 
-// Merge the cheap /api/status payload with its cached full-preflight summary.
+// Merge the cheap /api/status payload with its readiness summary.
 export function readinessFromStatus(status) {
   if (!status) return null
   const readiness = status.readiness || {}
@@ -39,33 +39,19 @@ export function readinessFromStatus(status) {
 
 const yesNo = (value, yes, no, unknown = 'Unknown') => (value === true ? yes : value === false ? no : unknown)
 
-function asteriskLabel(readiness) {
-  if (!readiness?.known) return 'Checking…'
-  if (readiness.ASTERISK_RUNNING) return `Running${readiness.ASTERISK_VERSION ? ` (${readiness.ASTERISK_VERSION})` : ''}`
-  return readiness.ASTERISK_INSTALLED ? 'Installed, not running' : 'Not installed'
-}
-
-function phoneLineLabel(readiness) {
-  if (!readiness?.known) return 'Checking…'
-  if (!readiness.TELEPHONY_INTERFACE) return 'None connected'
-  const kind = readiness.TELEPHONY_INTERFACE === 'sip' ? 'SIP trunk' : 'GSM modem'
-  return `${kind}: ${readiness.TELEPHONY_INTERFACE_READY ? 'ready' : 'not ready'}`
-}
-
 export function statusRows(backend, status) {
   const readiness = readinessFromStatus(status)
   const live = status?.mode === 'live'
   const rows = [
     ['Backend', backend === 'healthy' ? 'Healthy' : backend === 'checking' ? 'Checking…' : 'Unavailable'],
     ['Mode', status ? (live ? 'Live' : 'Demo (no real calls)') : 'Unknown'],
-    ['Telephony', status?.telephony === 'asterisk' ? 'Asterisk' : status?.telephony || 'Unknown'],
-    ['Fish Speech', yesNo(status?.fish_speech_ready, 'Ready', 'Not reachable')],
-    ['Voice pack', yesNo(status?.voice_pack_valid, 'Verified', 'Not ready')],
+    ['Telephony', status?.telephony === 'twilio' ? 'Twilio' : status ? 'Disabled' : 'Unknown'],
+    ['Voice (Fish Speech)', yesNo(status?.voice_pack_valid, 'Verified voice pack', 'Not ready')],
+    ['Fish Speech server', yesNo(status?.fish_speech_ready, 'Ready', 'Not reachable')],
     ['Scheduling', yesNo(status?.booking_repository_ready, live ? 'Connected' : 'Demo slots', 'Not connected (requests only)')],
   ]
   if (live) {
-    rows.push(['Asterisk', asteriskLabel(readiness)])
-    rows.push(['Phone line', phoneLineLabel(readiness)])
+    rows.push(['Call records', yesNo(status?.call_state_store_ready, 'Ready', 'Unavailable')])
     rows.push(['Software ready', readiness?.known ? yesNo(readiness.SOFTWARE_READY_FOR_LIVE_CALL, 'Yes', 'No') : 'Checking…'])
     rows.push(['Live calls', readiness?.known ? yesNo(readiness.LIVE_CALL_ALLOWED, 'Allowed', 'Blocked') : 'Checking…'])
   }
@@ -79,9 +65,12 @@ export function callOutcomeMessage(status, body) {
     if (body?.mode === 'demo') return 'Demo mode: your request was recorded and no real call was placed.'
     return 'Your request has been received. The clinic team will contact you in the chosen window.'
   }
+  if (status === 403 && detail.error === 'opted_out') return 'This number asked not to receive automated calls. The clinic team can still help you by phone.'
   if (status === 403) return 'Automated calls to this number are not enabled. Please choose a time window for a callback from the team.'
+  if (status === 429 && ['capacity_reached', 'quota_exhausted'].includes(detail.error)) return 'All our lines are busy right now. Please choose a callback window or try again in a few minutes.'
   if (status === 429) return 'A call to this number was placed recently. Please wait a few minutes before trying again.'
-  if (status === 503 && detail.error === 'live_call_preflight_failed') return 'Live calling is not available right now. Please choose a time window for a callback from the team.'
+  if (status === 502 && detail.error === 'twilio_outcome_unknown') return 'We could not confirm whether the call started. Please wait a few minutes before trying again.'
+  if (status === 503) return 'Live calling is not available right now. Please choose a time window for a callback from the team.'
   if (status === 422 || status === 400) return 'Please enter a valid phone number and give consent.'
   return 'We could not submit the request. Please try again or call the clinic.'
 }

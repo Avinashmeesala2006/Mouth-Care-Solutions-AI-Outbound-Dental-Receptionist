@@ -4,9 +4,10 @@ Every reply is a sequence of packaged voice assets (see knowledge/clinic/voice_p
 so the caller only ever hears approved Mouth Care Solutions wording in the Fish
 reference voice. The state machine is pure: it takes the stored session state and
 the caller's recognized speech and returns the prompts to play plus any request
-(appointment or callback) that must be persisted. Nothing here diagnoses, quotes
-prices, names doctors or confirms bookings: appointment requests are recorded for
-the clinic team to confirm.
+(appointment, callback or opt-out) that must be persisted. Nothing here diagnoses,
+quotes prices, names doctors, invents availability or confirms bookings: appointment
+requests are recorded for the clinic team to confirm, and cancellations become callback
+requests because no live booking system is connected.
 """
 from __future__ import annotations
 
@@ -48,8 +49,24 @@ THANKS = _pattern(r"thanks?", r"thank you")
 AFFIRM = _pattern(r"yes", r"yeah", r"yep", r"yup", r"sure", r"correct", r"confirm(?:ed)?", r"please do",
                   r"go ahead", r"okay", r"ok", r"right", r"absolutely", r"of course", r"send it")
 NEGATE = _pattern(r"no", r"nope", r"nah", r"don'?t", r"do not", r"not now", r"not really")
+NOT_AFFIRM = _pattern(r"not (?:correct|right|okay|ok|true)", r"incorrect", r"wrong", r"mistake")
 ABANDON = _pattern(r"cancel", r"never ?mind", r"forget it", r"stop", r"don'?t want")
 SMALL_TALK = _pattern(r"hello", r"hi", r"hey", r"help", r"information", r"question")
+# Explicit requests not to be called again. Checked before anything else in every stage.
+OPT_OUT = re.compile(
+    r"\b(?:(?:do not|don'?t|please don'?t) (?:call|contact|phone|ring)(?:\s+(?:me|us|this number|again)\b|(?=\W*$))"
+    r"|never (?:call|contact|phone) (?:me|us|this number)"
+    r"|stop (?:calling|contacting|phoning|ringing)"
+    r"|remove (?:my|this) (?:phone )?number"
+    r"|take (?:me|my number|this number) off"
+    r"|unsubscribe|opt(?:\s|-)?out|no more calls)",
+    re.IGNORECASE)
+CANCEL_APPOINTMENT = _pattern(r"cancel(?:l?ing|l?ed|lation)?(?: (?:my|the|an|our))? (?:appointment|booking|visit)",
+                              r"(?:appointment|booking) cancel(?:l?ation)?")
+CHANGE = _pattern(r"change", r"wrong", r"not (?:right|correct)", r"incorrect", r"mistake", r"actually", r"different",
+                  r"update", r"correct(?:ion)? (?:the|my)")
+FIELD_MENTION = (('collect_date', _pattern(r"date", r"day")), ('collect_time', _pattern(r"time")),
+                 ('collect_name', _pattern(r"name")), ('collect_reason', _pattern(r"reason", r"problem", r"purpose")))
 
 SLOT_STAGES = ('collect_date', 'collect_time', 'collect_name', 'collect_reason')
 STAGE_FIELD = {'collect_date': 'preferred_date', 'collect_time': 'preferred_time',
@@ -57,8 +74,9 @@ STAGE_FIELD = {'collect_date': 'preferred_date', 'collect_time': 'preferred_time
 STAGE_PROMPT = {'collect_date': 'ask_preferred_date', 'collect_time': 'ask_preferred_time',
                 'collect_name': 'ask_patient_name', 'collect_reason': 'ask_reason_for_visit',
                 'confirm': 'confirm_appointment'}
-FAQ = (('clinic_hours', HOURS), ('clinic_address', ADDRESS), ('clinic_phone', PHONE),
-       ('clinic_email', EMAIL), ('services', SERVICES))
+# Email is checked before the street address: "what is your email address?" asks for the email.
+FAQ = (('clinic_hours', HOURS), ('clinic_email', EMAIL), ('clinic_address', ADDRESS), ('clinic_phone', PHONE),
+       ('services', SERVICES))
 
 
 @dataclass
@@ -68,11 +86,12 @@ class PhoneTurn:
     hangup: bool = False
     appointment: dict | None = None
     callback_topic: str | None = None
+    opt_out: bool = False
     state: dict = field(default_factory=dict)
 
 
 def new_session(direction: str = 'inbound') -> dict:
-    return {'stage': 'idle', 'silence': 0, 'unclear': 0, 'turns': 0, 'direction': direction,
+    return {'stage': 'idle', 'silence': 0, 'unclear': 0, 'turns': 0, 'direction': direction, 'correcting': False,
             'appointment': {}, 'last_prompt': 'outbound_greeting' if direction == 'outbound' else 'greeting'}
 
 
@@ -106,6 +125,16 @@ def _faq(state: dict, intent: str, asset: str) -> PhoneTurn:
     return PhoneTurn(intent, [asset, 'anything_else'])
 
 
+def _correction_target(text: str, stage: str) -> str | None:
+    """Field the caller wants to change ('change the time', 'wrong date'), if any."""
+    if not CHANGE.search(text):
+        return None
+    for field_stage, pattern in FIELD_MENTION:
+        if field_stage != stage and pattern.search(text):
+            return field_stage
+    return None
+
+
 def _respond(state: dict, text: str, max_turns: int) -> PhoneTurn:
     if state['turns'] > max_turns:
         return _goodbye(state, 'turn_limit')
@@ -119,28 +148,48 @@ def _respond(state: dict, text: str, max_turns: int) -> PhoneTurn:
         return PhoneTurn('silence', ['repeat_or_not_understood'])
     state['silence'] = 0
 
+    if OPT_OUT.search(text):
+        # Recorded by the caller of this function; the call ends after the confirmation.
+        state['appointment'] = {}
+        state['stage'] = 'ended'
+        prompts = (['emergency_care'] if EMERGENCY.search(text) else []) + ['opt_out_confirmed']
+        return PhoneTurn('opt_out', prompts, hangup=True, opt_out=True)
+
     if EMERGENCY.search(text):
         state['appointment'] = {}
+        state['correcting'] = False
         return _faq(state, 'emergency', 'emergency_care')
+
+    if stage in SLOT_STAGES or stage == 'confirm':
+        target = _correction_target(text, stage)
+        if target and (stage == 'confirm' or STAGE_FIELD[target] in state['appointment']):
+            state['stage'] = target
+            state['correcting'] = True
+            return PhoneTurn(f'appointment_correct_{STAGE_FIELD[target]}', [STAGE_PROMPT[target]])
 
     if stage in SLOT_STAGES:
         if ABANDON.search(text):
             state['appointment'] = {}
+            state['correcting'] = False
             return _faq(state, 'appointment_abandoned', 'appointment_declined')
         if END.search(text):
             return _goodbye(state)
         state['appointment'][STAGE_FIELD[stage]] = text
-        next_stage = 'confirm' if stage == SLOT_STAGES[-1] else SLOT_STAGES[SLOT_STAGES.index(stage) + 1]
+        if state.get('correcting'):
+            next_stage = 'confirm'
+            state['correcting'] = False
+        else:
+            next_stage = 'confirm' if stage == SLOT_STAGES[-1] else SLOT_STAGES[SLOT_STAGES.index(stage) + 1]
         state['stage'] = next_stage
         return PhoneTurn(f'appointment_{STAGE_FIELD[stage]}', [STAGE_PROMPT[next_stage]])
 
     if stage == 'confirm':
-        if AFFIRM.search(text) and not NEGATE.search(text):
+        if AFFIRM.search(text) and not NEGATE.search(text) and not NOT_AFFIRM.search(text):
             details = state['appointment']
             state['appointment'] = {}
             state['stage'] = 'idle'
             return PhoneTurn('appointment_confirmed', ['appointment_recorded', 'anything_else'], appointment=details)
-        if NEGATE.search(text) or ABANDON.search(text):
+        if NEGATE.search(text) or ABANDON.search(text) or NOT_AFFIRM.search(text):
             state['appointment'] = {}
             return _faq(state, 'appointment_declined', 'appointment_declined')
         state['unclear'] += 1
@@ -153,6 +202,11 @@ def _respond(state: dict, text: str, max_turns: int) -> PhoneTurn:
     if UNSUPPORTED.search(text):
         state['unclear'] = 0
         return PhoneTurn('unsupported_question', ['unsupported_question', 'anything_else'], callback_topic=text)
+    if CANCEL_APPOINTMENT.search(text):
+        # No live booking system: the clinic team handles cancellations by calling back.
+        state['unclear'] = 0
+        return PhoneTurn('cancellation_callback', ['callback_noted', 'anything_else'],
+                         callback_topic=f'Appointment cancellation request: {text}')
     if APPOINTMENT.search(text):
         state['unclear'] = 0
         state['stage'] = 'collect_date'

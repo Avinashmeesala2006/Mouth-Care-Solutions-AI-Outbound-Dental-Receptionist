@@ -1,8 +1,8 @@
+import pytest
 from fastapi.testclient import TestClient
-from starlette.datastructures import URL
-from backend.app.main import app
+
 from backend.app.auth import hash_password, verify_password
-import base64, hashlib, hmac, io, wave
+from backend.app.main import app
 
 client = TestClient(app)
 
@@ -31,32 +31,30 @@ def test_password_hashing():
     assert verify_password('correct horse battery staple', encoded)
     assert not verify_password('wrong', encoded)
 
-def test_provider_interfaces_are_demo_safe():
-    from backend.app.adapters.providers import MockVoiceProvider, MockNotificationProvider
-    assert MockVoiceProvider().start_session('s')['status'] == 'started'
+def test_notification_seam_is_demo_safe():
+    from backend.app.adapters.providers import MockNotificationProvider
     assert MockNotificationProvider().send('email','x','hello')['status'] == 'queued'
 
 def test_usage_thresholds():
-    from backend.app.services.usage import UsageMeter
-    meter = UsageMeter()
-    assert meter.record(2100)['threshold'] == '70%'
-    assert meter.record(750)['threshold'] == '95%'
-    assert meter.record(150)['billable_calling_allowed'] is False
+    from backend.app.services.usage import threshold_label
+    assert threshold_label(70.0) == '70%'
+    assert threshold_label(95.0) == '95%'
+    assert threshold_label(100.0) == '100%'
+    usage = client.get('/api/usage').json()
+    assert usage['quota_seconds'] == 180000 and usage['quota_hours'] == 50 and usage['threshold'] == 'below_70%'
 
 
-def test_live_llm_does_not_fallback(monkeypatch):
-    from backend.app.core.config import settings
+def test_production_llm_does_not_fallback(monkeypatch):
     from backend.app.adapters.llm import get_llm_provider
-    monkeypatch.setattr(settings, 'mock_mode', False)
+    from backend.app.core.config import settings
+    monkeypatch.setattr(settings, 'app_mode', 'production')
     monkeypatch.setattr(settings, 'llm_api_key', '')
     monkeypatch.setattr(settings, 'openai_api_key', '')
     try:
         get_llm_provider()
-        assert False, 'LIVE MODE must not silently use mock LLM'
+        pytest.fail('production must not silently use a mock LLM')
     except RuntimeError as exc:
         assert 'refusing mock fallback' in str(exc)
-    finally:
-        monkeypatch.setattr(settings, 'mock_mode', True)
 
 def test_demo_admin_login_and_signed_session():
     r = client.post('/api/admin/login', json={'email':'demo@example.test','password':'demo-password'})
@@ -75,16 +73,13 @@ def test_root_and_favicon_are_handled():
     assert client.get('/favicon.ico').status_code == 204
 
 
-def test_call_request_and_public_status_are_safe(monkeypatch):
-    from backend.app import main
-    monkeypatch.delenv('CALL_PROVIDER', raising=False)
-    monkeypatch.setattr(main.settings, 'call_provider', 'mock')
+def test_call_request_and_public_status_are_safe():
     status=client.get('/api/status').json()
-    assert status['mode']=='demo' and 'clinic_phone' in status and 'ASTERISK_AMI_SECRET' not in str(status)
-    r=client.post('/api/calls/request',json={'name':'QA Patient','patient_contact':'+919999999999','preferred_window':'Afternoon','topic':'Appointment','consent':True})
-    assert r.status_code==200 and r.json()['status']=='queued'
-    request_id=r.json()['request_id']
-    assert client.get('/api/calls/'+request_id).json()['request_id']==request_id
-    assert client.post('/api/calls/request',json={'name':'QA Patient','patient_contact':'+919999999999','preferred_window':'Afternoon','topic':'Appointment','consent':False}).status_code==400
+    assert status['mode']=='demo' and status['telephony']=='disabled' and 'clinic_phone' in status
+    assert 'SECRET' not in str(status) and 'private' not in str(status).lower()
+    r=client.post('/api/calls/request',json={'name':'QA Patient','patient_contact':'+12025550143','preferred_window':'Afternoon','topic':'Appointment','consent':True})
+    assert r.status_code==200 and r.json()['status']=='queued' and r.json()['mode']=='demo'
+    assert client.post('/api/calls/request',json={'name':'QA Patient','patient_contact':'+12025550143','preferred_window':'Afternoon','topic':'Appointment','consent':False}).status_code==400
+    assert client.get('/api/calls/not-a-call').status_code==404
 
 

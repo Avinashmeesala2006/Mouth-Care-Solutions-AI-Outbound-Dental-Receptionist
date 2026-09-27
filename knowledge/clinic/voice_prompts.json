@@ -1,5 +1,5 @@
 {
-  "version": "2.1.0",
+  "version": "2.2.0",
   "source": "knowledge/clinic/approved.json",
   "notes": "Canonical spoken text for every packaged voice asset. Facts must match approved.json; numbers are written in spoken form so Fish Speech pronounces them reliably. 'keywords' are words the ASR transcript must contain for the asset to pass validation.",
   "prompts": {
@@ -201,6 +201,44 @@
       "keywords": [
         "thank",
         "goodbye"
+      ]
+    },
+    "opt_out_confirmed": {
+      "text": "Understood. We will not call this number again. Goodbye.",
+      "keywords": [
+        "understood",
+        "call",
+        "number",
+        "goodbye"
+      ],
+      "required_phrases": [
+        [
+          "will not call",
+          "won't call"
+        ]
+      ]
+    },
+    "technical_issue": {
+      "text": "I am sorry, we are having a temporary technical issue. Please try again shortly.",
+      "keywords": [
+        "sorry",
+        "technical",
+        "issue",
+        "try"
+      ],
+      "required_phrases": [
+        [
+          "technical issue"
+        ]
+      ]
+    },
+    "lines_busy": {
+      "text": "I am sorry, all of our lines are busy right now. Please call again in a few minutes.",
+      "keywords": [
+        "sorry",
+        "lines",
+        "busy",
+        "call"
       ]
     }
   }

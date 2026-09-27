@@ -133,7 +133,8 @@ def transcript_problems(transcript: str, prompt: dict) -> list[str]:
             problems.append('asr_required_phrase_missing:' + options[0])
     for i in range(len(heard) - 1):
         word = heard[i]
-        if word == heard[i + 1] and word not in _NUMBER_WORDS and not word.isdigit() and not _contains_sequence(expected, [word, word]):
+        if (word == heard[i + 1] and word not in _NUMBER_WORDS and not word.isdigit()
+                and not _contains_sequence(expected, [word, word])):
             problems.append(f'asr_repeated_word:{word}')
             break
     for i in range(len(heard) - 3):
@@ -205,7 +206,7 @@ def load_voice_pack(pack_dir: Path, prompts: dict, reference_path: Path) -> Voic
         if problems:
             status.errors.extend(f'{problem}:{asset_id}' for problem in problems)
             continue
-        if not status.reference_matches:
+        if not status.reference_matches or metrics is None:
             continue  # audio is not provably from the configured reference voice
         status.assets[asset_id] = VoiceAsset(asset_id, content, digest, round(metrics['duration_seconds'], 3), prompt['text'])
     for extra in sorted(set(entries) - set(prompts)):

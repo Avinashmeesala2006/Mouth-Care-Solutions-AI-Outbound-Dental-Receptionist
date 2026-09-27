@@ -42,7 +42,10 @@ import ormsgpack
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-from backend.app.services.voice_pack import load_voice_pack, transcript_problems  # noqa: E402  (stdlib-only module shared with the runtime validator)
+from backend.app.services.voice_pack import (  # noqa: E402  (stdlib-only module shared with the runtime validator)
+    load_voice_pack,
+    transcript_problems,
+)
 
 DEFAULT_REFERENCE = PROJECT_ROOT / "fish-references" / "mouth-care-receptionist-reference-20260919.wav"
 REFERENCE_TEXT = (
@@ -89,13 +92,15 @@ def sha256_file(path: Path) -> str:
 def fish_revision(fish_root: Path) -> dict:
     def git(*args: str) -> str:
         try:
-            return subprocess.run(["git", "-C", str(fish_root), *args], capture_output=True, text=True, timeout=20).stdout.strip()
+            return subprocess.run(["git", "-C", str(fish_root), *args], capture_output=True, text=True, timeout=20).stdout
         except (OSError, subprocess.SubprocessError):
             return ""
+    # Porcelain lines are "XY path"; the leading status column may be a space, so never strip it.
+    modified = git("status", "--porcelain", "--untracked-files=no").splitlines()
     return {
-        "version": git("describe", "--tags", "--always"),
-        "commit": git("rev-parse", "--short", "HEAD"),
-        "local_modifications": sorted(line[3:] for line in git("status", "--porcelain", "--untracked-files=no").splitlines() if line),
+        "version": git("describe", "--tags", "--always").strip(),
+        "commit": git("rev-parse", "--short", "HEAD").strip(),
+        "local_modifications": sorted(line[3:].strip() for line in modified if len(line) > 3),
     }
 
 
@@ -381,7 +386,8 @@ def main() -> int:
             for asset_id, entry in prior_entries.items():
                 previous = state["assets"].get(asset_id)
                 if previous and not previous.get("asr_model"):
-                    previous["asr_model"] = entry.get("asr_model") or (entry.get("asr") or {}).get("model") or prior_manifest.get("asr_model")
+                    previous["asr_model"] = (entry.get("asr_model") or (entry.get("asr") or {}).get("model")
+                                             or prior_manifest.get("asr_model"))
         except (OSError, ValueError, KeyError, TypeError):
             pass
     fish = fish_revision(Path(args.fish_root))
@@ -415,7 +421,8 @@ def main() -> int:
                     save_state(state_path, state)
                     print(f"SKIP {asset_id} re-verified heard={recheck['transcript']!r}", flush=True)
                     continue
-                print(f"REVERIFY_FAIL {asset_id} {recheck['errors'] + acoustic_now['errors']} heard={recheck['transcript']!r}", flush=True)
+                problems = recheck['errors'] + acoustic_now['errors']
+                print(f"REVERIFY_FAIL {asset_id} {problems} heard={recheck['transcript']!r}", flush=True)
             attempts = []
             for attempt in range(1, args.max_attempts + 1):
                 seed = BASE_SEED + index * 97 + (attempt - 1) * 1009

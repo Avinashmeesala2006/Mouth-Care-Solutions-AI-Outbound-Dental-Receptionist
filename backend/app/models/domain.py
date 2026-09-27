@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from enum import Enum
+
 
 def now(): return datetime.now(timezone.utc)
 class BookingStatus(str, Enum): SEARCHING='SEARCHING'; SLOT_FOUND='SLOT_FOUND'; HOLD='HOLD'; PATIENT_CONFIRMATION='PATIENT_CONFIRMATION'; CONFIRMED='CONFIRMED'; EXPIRED='EXPIRED'; CANCELLED='CANCELLED'; FAILED='FAILED'; HUMAN_REQUIRED='HUMAN_REQUIRED'

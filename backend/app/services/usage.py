@@ -1,12 +1,13 @@
-from dataclasses import dataclass
+"""Service-quota alert thresholds (the quota itself is tracked per call in PostgreSQL)."""
 
-@dataclass
-class UsageMeter:
-    envelope_minutes: int = 3000
-    used_minutes: float = 0
-    def record(self, minutes: float) -> dict:
-        self.used_minutes += max(0, minutes)
-        percent = self.used_minutes / self.envelope_minutes * 100
-        threshold = '100%' if percent >= 100 else '95%' if percent >= 95 else '85%' if percent >= 85 else '70%' if percent >= 70 else 'below_70%'
-        return {'minutes': self.used_minutes, 'percent_used': round(percent, 2), 'threshold': threshold, 'outbound_allowed': percent < 95, 'billable_calling_allowed': percent < 100}
-''
+
+def threshold_label(percent_used: float) -> str:
+    if percent_used >= 100:
+        return '100%'
+    if percent_used >= 95:
+        return '95%'
+    if percent_used >= 85:
+        return '85%'
+    if percent_used >= 70:
+        return '70%'
+    return 'below_70%'

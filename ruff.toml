@@ -1,0 +1,24 @@
+line-length = 130
+target-version = "py311"
+extend-exclude = ["frontend", "diagnostics", "artifacts"]
+
+[lint]
+# Correctness-focused set: pyflakes, pycodestyle errors/warnings, bugbear, asyncio pitfalls, imports.
+select = ["F", "E", "W", "B", "ASYNC", "I"]
+# The demo booking/web modules use compact one-line definitions; keep their established style.
+ignore = ["E701", "E702", "E401", "E731"]
+
+[lint.per-file-ignores]
+# Scripts put the project root on sys.path before importing the application.
+"scripts/*.py" = ["E402"]
+"backend/tests/*.py" = ["E402", "E501"]
+# Legacy demo web modules keep their original compact one-line style.
+"backend/app/services/engine.py" = ["E501"]
+"backend/app/services/repository.py" = ["E501"]
+"backend/app/models/domain.py" = ["E501"]
+"backend/app/schemas/api.py" = ["E501"]
+"backend/app/auth.py" = ["E501"]
+"backend/app/demo_page.py" = ["E501"]
+
+[lint.isort]
+known-first-party = ["backend"]

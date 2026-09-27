@@ -1,15 +1,7 @@
 # Deployment
 
-Local Windows host: `scripts/run_local_stack.ps1` starts or reuses Fish Speech (:8080), FastAPI
-(:8000) and, if `PUBLIC_BASE_URL` is set, the ngrok tunnel for the web application, then prints
-the live-call preflight. Asterisk runs in WSL2 (`scripts/setup_asterisk.ps1`,
-`scripts/asterisk_ctl.ps1`); see docs/telephony-asterisk.md. The public URL serves the web
-application only; it does not provide telephone connectivity.
+On Windows, `scripts/run_local_stack.ps1` starts or reuses PostgreSQL, Fish Speech, FastAPI, and optionally ngrok. It checks health and prints readiness; it never places a call.
 
-Docker Compose runs the API and the Nginx frontend (port 8080, proxying `/api/`). Asterisk is not
-part of the compose file; point `ASTERISK_AMI_HOST` at a private Asterisk host.
+Set Twilio credentials only through the local environment or a secret manager: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `TWILIO_ENABLED=true`, and a public HTTPS `PUBLIC_BASE_URL`. Configure Twilio webhooks to `/api/telephony/twilio/outbound` and `/api/telephony/twilio/status`.
 
-`MOCK_MODE=true` is the portable demo mode. With `MOCK_MODE=false` nothing falls back to mocks:
-`/ready` and `/api/telephony/preflight` report every missing piece (Asterisk, phone line,
-voice pack, Fish Speech, speech recognition, configuration). For production add managed
-PostgreSQL for bookings, HTTPS, a secret manager, monitoring, backups and retention controls.
+Production requires PostgreSQL, strong admin/JWT secrets, strict Twilio signature validation, a reachable public origin, and the validated Fish Speech voice pack.

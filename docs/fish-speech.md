@@ -1,103 +1,92 @@
-# Fish Speech reference voice
+# Fish Speech (TTS)
 
-Production phone turns select an approved semantic utterance and play its immutable, validated pack asset:
+Fish Speech is the only speech synthesis engine. It is not the telephony provider, the database
+or the speech recogniser.
 
-> caller intent → approved prompt ID → reference-derived 8 kHz mono 16-bit WAV → Asterisk `STREAM FILE` (FastAGI) → caller reply recorded and transcribed locally
+## Installed version (verified)
 
-The pack is generated offline with the long-running local Fish Speech server and `fish-references/mouth-care-receptionist-reference-20260919.wav`. Phone webhooks do not synthesize arbitrary text. A missing or invalid asset fails closed (the call ends); the runtime never substitutes unrelated speech or any text-to-speech voice.
+| Item | Value |
+| --- | --- |
+| Checkout | `E:\fish-speech`, tag **v1.5.1** (commit `58046ea`) |
+| Model | `fish-speech-1.5`: `checkpoints/fish-speech-1.5/model.pth` + `firefly-gan-vq-fsq-8x1024-21hz-generator.pth` |
+| Runtime | Python 3.12.10, PyTorch 2.4.1+cpu (`torch.cuda.is_available() == False`) |
+| Local patches | `tools/server/model_manager.py` (float32 on CPU, no CPU warm-up), `tools/server/views.py` (synthesis off the event loop) |
+| Server | `tools/api_server.py --listen 127.0.0.1:8080 --device cpu --workers 1 --llama-checkpoint-path checkpoints/fish-speech-1.5 --decoder-checkpoint-path checkpoints/fish-speech-1.5/firefly-gan-vq-fsq-8x1024-21hz-generator.pth --decoder-config-name firefly_gan_vq` |
+| Health | `GET /v1/health` → `{"status":"ok"}` (the port opens only after the model has loaded, ≈ 73 s on this PC) |
+| TTS | `POST /v1/tts`, msgpack `ServeTTSRequest` |
+| Output | WAV, 44 100 Hz, mono, 16-bit signed little-endian PCM |
 
-## Hardware boundary
+The host has an NVIDIA RTX 2050 (4 GB), but the Fish environment uses CPU-only PyTorch, so inference
+runs on the CPU. Installing a CUDA build of PyTorch 2.4.1 into `E:\fish-speech\.venv` is the first
+thing to try for faster synthesis; it was not changed as part of this work.
 
-The current Fish Speech S2 Pro documentation recommends at least **24 GB of GPU memory** for inference. The original development machine has 6 CPU cores, 7.8 GiB RAM, and no NVIDIA GPU/CUDA. S2 Pro installation and weight download succeeded there, but CPU model startup was OOM-killed with exit code 137. The application records generation latency and real-time factor rather than claiming real-time performance.
+## Reference voice
 
-## Linux installation
+`fish-references/mouth-care-receptionist-reference-20260919.wav` — 21.93 s, 44.1 kHz, mono, 16-bit
+PCM, SHA-256 `ac73a7d1…3ffa1b` (recorded in the voice-pack manifest). Transcript:
+`fish-references/mouth-care-receptionist-reference.txt` (= `FISH_SPEECH_REFERENCE_TEXT`). Each
+request sends the audio and transcript as `references` with `use_memory_cache=on`, so the server
+encodes the reference once and reuses the tokens. `fish-references/mouth-care-receptionist-reference.wav`
+is an earlier take kept for provenance; it is not used.
 
-From a machine with sufficient resources:
+## How calls use Fish Speech
 
-```bash
-git clone https://github.com/fishaudio/fish-speech.git
-cd fish-speech
-python3.12 -m venv .venv
-. .venv/bin/activate
-pip install -e '.[cu129]'       # select the CUDA extra matching the machine
-hf download fishaudio/s2-pro --local-dir checkpoints/s2-pro
-python tools/api_server.py --listen 0.0.0.0:8080 --device cuda --half
-```
+1. **Voice pack** (`artifacts/voice-pack`, 25 approved utterances): generated offline by
+   `scripts/generate_voice_pack_http.py` from the reference voice, converted to 8 kHz telephone WAV,
+   verified (hash, reference hash, acoustic speech checks, faster-whisper `small.en` transcript with
+   keywords and required phrases) and published atomically. The runtime re-validates it and converts
+   every asset once to telephone PCM, so the first audio of every reply is immediate.
+2. **Phrase cache** (`artifacts/tts-cache`): Fish output for arbitrary text, keyed by text + voice
+   signature (model, version, reference hash, reference transcript, generation parameters, seed).
+   Audio made with another voice/reference/model is never served.
+3. **Live synthesis** (`FISH_SPEECH_LIVE_SYNTHESIS=true`, off by default): sentence by sentence, with
+   a first-audio budget; optional streaming. v1.5.1 streams **headerless** 16-bit PCM (its WAV header
+   is dropped server-side), so the client uses the rate from an earlier WAV response or
+   `FISH_SPEECH_SAMPLE_RATE` and otherwise refuses the stream.
+4. **Failure**: the pre-generated `technical_issue` asset ("I am sorry, we are having a temporary
+   technical issue. Please try again shortly.") and the call ends. No other TTS engine exists.
 
-For CPU-only testing, use `pip install -e '.[cpu]'` and `--device cpu`. The local API is `POST http://127.0.0.1:8080/v1/tts`. The adapter sends JSON containing `text`, `format: wav`, `streaming: false`, and optional reference audio or reference ID.
+## Measured performance (development PC, CPU)
 
-The supplied project includes `scripts/run_fish_speech.sh`, which performs install, model-download, hardware checks, and server startup after the operator supplies a Fish Speech checkout.
+Host: Intel Core i5-12450H (8 cores / 12 threads), 15.7 GB RAM, Windows 11, Fish on CPU.
+Reports: `diagnostics/fish_speech_performance_*.json`; voice-pack timings in `artifacts/voice-pack/manifest.json`.
 
-## Windows PowerShell
+| Test | Audio | Synthesis | RTF |
+| --- | --- | --- | --- |
+| Cold first request "Hello, thank you for calling Mouth Care Solutions." | 4.64 s | 80.0 s | 17.2 |
+| Warm, same text (non-streaming) | 6.08 s | 76.1–82.5 s | 12.5–13.6 |
+| Warm, same text (streaming; first audio at the end) | 6.08 s | 78.0 s | 12.8 |
+| "Thank you." ×2 concurrently | 0.46 s each | 9.96 s and 19.73 s (serialised) | ≈ 21 |
+| Voice pack generation, 25 utterances (typical attempts) | 3.6–17 s each | 69–244 s each | 12.3–22.7 (mean 14.5) |
 
-Use `scripts/run_fish_speech.ps1`. It checks Python 3.12+, Git, FFmpeg, NVIDIA availability, RAM, the Fish Speech checkout, and model weights. It defaults to CUDA and refuses a CPU S2 Pro start on a host below the documented memory threshold unless CPU testing is explicitly requested:
+While synthesizing, the Fish process keeps about 5.3 of 12 logical CPUs busy and holds 2.7 GB (3.6 GB
+cold). One outlier request took 890 s for 7.3 s of audio. The faster-whisper `small.en` check hears the
+static-test audio correctly ("hello thank you for calling mouth care solutions"); `base.en` misheard
+"Mouth Care" as "Healthcare".
 
-```powershell
- .\scripts\run_fish_speech.ps1 -Backend cuda
-# Explicit CPU experiment only:
- .\scripts\run_fish_speech.ps1 -Backend cpu -AllowCpu
-```
+**Conclusion:** live Fish Speech synthesis on this CPU is 12–17× slower than real time and cannot
+serve a phone turn. Production calls use the verified pre-generated voice pack (0 ms synthesis at
+call time). Live synthesis of new sentences needs a CUDA GPU host; re-measure there with
+`scripts/measure_fish_speech.py` before enabling `FISH_SPEECH_LIVE_SYNTHESIS`.
 
-A compatible NVIDIA driver/runtime is required for the CUDA path. Native Windows is supported by this launcher; WSL is not required by the project launcher.
+## Operations
 
-## Docker Compose
+* Start: `scripts/run_fish_speech.ps1` (installs v1.5.1 and the 1.5 weights when missing) or
+  `scripts/run_local_stack.ps1`. Linux: `scripts/run_fish_speech.sh`.
+* Keep the server private (loopback or private network); the application never exposes it.
+* Health from the app: `GET /api/voice/fish/health` distinguishes configured, reachable (a busy
+  server can time out), model_loaded and ready.
+* Add or change an utterance: edit `knowledge/clinic/voice_prompts.json`, then
+  `E:\fish-speech\.venv\Scripts\python.exe scripts/generate_voice_pack_http.py --only <ids> --publish`
+  and `python scripts/validate_voice_pack.py`.
+* Docker: the optional `fish-speech` Compose service pins `fishaudio/fish-speech:v1.5.1` for CUDA hosts.
 
-The `voice` Compose profile includes the official `fishaudio/fish-speech:latest` service. Model weights are mounted from `FISH_SPEECH_CHECKPOINTS_DIR` (default `./fish-checkpoints`) and reference files from `FISH_SPEECH_REFERENCES_DIR` (default `./fish-references`). The API container reaches Fish Speech at the Docker service hostname `http://fish-speech:8080`, not `127.0.0.1`:
+## Troubleshooting
 
-```powershell
-$env:FISH_SPEECH_ENABLED = "true"
-$env:FISH_SPEECH_DEVICE = "cuda"
-docker compose --profile voice up --build
-```
-
-The official container requires a compatible NVIDIA runtime for the CUDA configuration. On a CPU-only machine, use the launcher with an explicitly authorized CPU test; the current S2 Pro model may not fit in small-memory hosts.
-
-## Application configuration
-
-Copy `.env.example` to `.env` and set:
-
-```dotenv
-FISH_SPEECH_ENABLED=true
-FISH_SPEECH_BASE_URL=http://127.0.0.1:8080
-FISH_SPEECH_MODEL=fish-speech-1.5
-FISH_SPEECH_OUTPUT_FORMAT=wav
-FISH_SPEECH_SAMPLE_RATE=8000
-FISH_SPEECH_CHANNELS=1
-FISH_SPEECH_TIMEOUT_SECONDS=900
-FISH_SPEECH_REFERENCE_AUDIO=fish-references/mouth-care-receptionist-reference-20260919.wav
-```
-
-When running through Compose, set `FISH_SPEECH_BASE_URL=http://fish-speech:8080`. Only use authorized reference audio and its approved transcript. `FISH_SPEECH_REFERENCE_ID` is not used by the current packaged production call path.
-
-## Telephone conversion and delivery
-
-The generator converts Fish output with FFmpeg to 8 kHz, mono, signed 16-bit PCM WAV and validates ASR, keywords, required phrases, acoustic metrics, and hashes. It builds and validates a complete temporary pack before swapping it into place; a failed generation or validation leaves the published pack unchanged. Each asset records its own ASR model provenance, which matters when targeted regeneration uses a smaller model. During a call Asterisk plays only assets the backend has validated (`STREAM FILE` from the pack directory, seen from WSL as `/mnt/...`); FastAPI also serves them read-only at `/api/telephony/audio/{asset_id}`. There is no text-to-speech fallback.
-
-## Readiness and status
-
-`/ready` reports `fish_speech.configured` separately from `fish_speech.reachable` and returns HTTP 503 in live mode when Fish Speech is unreachable, configuration is invalid, the voice pack is invalid, or call state is unavailable. `/api/telephony/preflight` independently checks Asterisk, the phone line, speech recognition and packaged audio before deriving `LIVE_CALL_ALLOWED`.
-
-## Tests and measurements
-
-Run `python scripts/validate_voice_pack.py` after generation; it exits nonzero unless all currently required intents pass the same validator used by FastAPI. The tests validate the offline Fish generator contract, ASR and acoustic checks, WAV format, atomic publication rollback, immutable pack checksums, semantic asset selection, and the end-to-end FastAGI conversation. Generation logs include source text length, output duration, latency, and real-time factor (`latency / audio_duration`).
-
-On the current host, the Fish environment detects that CUDA is unavailable to its installed PyTorch build even though an NVIDIA GPU is present; Fish therefore falls back to CPU. CPU generation is slow and can exhaust memory. Use a CUDA-enabled Fish environment for full-pack regeneration; do not loosen ASR/content validation or publish a partial pack to make a phone test pass.
-
-## Verified constrained-host model
-
-`fishaudio/fish-speech-1.5` with the official Fish Speech `v1.5.1` server was verified on the CPU-only sandbox. It generated real speech at 44.1 kHz mono, which the project adapter converted to telephone WAV. The direct adapter run produced 4.923 seconds of 8 kHz telephone audio in 248.329 seconds (RTF 50.446). This is functional but far too slow for interactive telephony on CPU; use a GPU host for production latency.
-
-The verified model is `fish-speech-1.5` with the Fish Speech `v1.5.1` server. The production call path uses the validated pack made from this model and the configured reference audio.
-
-## Uploaded reference voice
-
-The project distribution includes `fish-references/mouth-care-receptionist-reference-20260919.wav`, the configured reference recording. The offline generator sends the audio and approved transcript as Fish Speech reference conditioning when producing the packaged utterances.
-
-Set:
-
-```dotenv
-FISH_SPEECH_REFERENCE_AUDIO=fish-references/mouth-care-receptionist-reference-20260919.wav
-FISH_SPEECH_REFERENCE_TEXT=Tomorrow is holiday because of Sunday. The Sunday is because of today is Saturday. Today is Saturday is because of yesterday is Friday. Friday is because of Thursday. But I know you are not willing to listen, but you have to listen.
-```
-
-The reference conditions pack generation; phone responses are the pre-generated approved WAV assets, not per-request synthesis. Validate any regenerated pack with `python scripts/validate_voice_pack.py` before publication.
+| Symptom | Cause / fix |
+| --- | --- |
+| `/v1/health` refused for ~1–2 min after start | model still loading on CPU |
+| health times out while a request runs | v1.5.1 streaming blocks its event loop; the app reports `health_timeout` |
+| `RuntimeError: bad allocation` in the Fish log | out of memory during decoding; close other heavy processes |
+| pack `reference_audio_mismatch` | the reference WAV changed; regenerate the whole pack |
+| pack `asr_*` errors | a take was misheard; regenerate that asset with `--only` |

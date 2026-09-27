@@ -1,12 +1,12 @@
 {
   "pack_version": "2.0.0",
-  "created_at": "2026-09-26T06:43:16.758092+00:00",
+  "created_at": "2026-09-26T14:55:31.844528+00:00",
   "generator": "scripts/generate_voice_pack_http.py",
   "fish_speech_model": "fish-speech-1.5",
   "fish_speech_version": "v1.5.1",
   "fish_speech_commit": "58046ea",
   "fish_speech_local_modifications": [
-    "ools/server/model_manager.py",
+    "tools/server/model_manager.py",
     "tools/server/views.py"
   ],
   "reference_audio_filename": "mouth-care-receptionist-reference-20260919.wav",
@@ -51,7 +51,10 @@
     "anything_else": "anything_else.wav",
     "repeat_or_not_understood": "repeat_or_not_understood.wav",
     "generic_help": "generic_help.wav",
-    "goodbye": "goodbye.wav"
+    "goodbye": "goodbye.wav",
+    "opt_out_confirmed": "opt_out_confirmed.wav",
+    "technical_issue": "technical_issue.wav",
+    "lines_busy": "lines_busy.wav"
   },
   "assets": [
     {
@@ -931,6 +934,126 @@
         "transcript": "Thank you for speaking with NotCare Solutions. Goodbye.",
         "content_wer": 0.222,
         "content_cer": 0.062,
+        "keywords_missing": [],
+        "model": "faster-whisper/small.en"
+      }
+    },
+    {
+      "asset_id": "opt_out_confirmed",
+      "intent": "opt_out_confirmed",
+      "source_text": "Understood. We will not call this number again. Goodbye.",
+      "file_path": "artifacts/voice-pack/opt_out_confirmed.wav",
+      "file_size": 117764,
+      "sha256": "6cd66de5df7ec3f2964deee192962650482a2ebbed4a05085a8163143e1cb711",
+      "raw_sha256": "75699bd6498d7c58baec2ad4f348b3859a452593b166d6ea498b36bd520cf25d",
+      "duration_seconds": 7.355,
+      "sample_rate": 8000,
+      "channels": 1,
+      "sample_width": 2,
+      "frames": 58843,
+      "seed": 20264069,
+      "attempt": 2,
+      "generation_seconds": 83.9,
+      "generated_at": "2026-09-26T14:49:41.695937+00:00",
+      "generation_status": "fish_http_reference_conditioned",
+      "validation_status": "asr_verified",
+      "acoustic": {
+        "sample_rate": 8000,
+        "channels": 1,
+        "sample_width": 2,
+        "frames": 58843,
+        "duration_seconds": 7.355,
+        "word_count": 9,
+        "seconds_per_word": 0.817,
+        "active_fraction": 0.54,
+        "energy_modulation": 0.732,
+        "peak_dbfs": -2.01
+      },
+      "asr_model": "faster-whisper/small.en",
+      "asr": {
+        "transcript": "understood. We will not call this number again. Goodbye",
+        "content_wer": 0.0,
+        "content_cer": 0.0,
+        "keywords_missing": [],
+        "model": "faster-whisper/small.en"
+      }
+    },
+    {
+      "asset_id": "technical_issue",
+      "intent": "technical_issue",
+      "source_text": "I am sorry, we are having a temporary technical issue. Please try again shortly.",
+      "file_path": "artifacts/voice-pack/technical_issue.wav",
+      "file_size": 128166,
+      "sha256": "d6dd1b0def81ce672fa37f77c7bef5224a63eb6e1726142e0be92e5c00b091ba",
+      "raw_sha256": "6e7365328a39b9a1bb4428c917270bda5e6fd358b6a547be8150859aedebe65a",
+      "duration_seconds": 8.005,
+      "sample_rate": 8000,
+      "channels": 1,
+      "sample_width": 2,
+      "frames": 64044,
+      "seed": 20263157,
+      "attempt": 1,
+      "generation_seconds": 98.8,
+      "generated_at": "2026-09-26T14:51:23.009695+00:00",
+      "generation_status": "fish_http_reference_conditioned",
+      "validation_status": "asr_verified",
+      "acoustic": {
+        "sample_rate": 8000,
+        "channels": 1,
+        "sample_width": 2,
+        "frames": 64044,
+        "duration_seconds": 8.005,
+        "word_count": 14,
+        "seconds_per_word": 0.572,
+        "active_fraction": 0.805,
+        "energy_modulation": 0.841,
+        "peak_dbfs": -1.97
+      },
+      "asr_model": "faster-whisper/small.en",
+      "asr": {
+        "transcript": "I am sorry. We are having a temporary technical issue. Please try again shortly.",
+        "content_wer": 0.0,
+        "content_cer": 0.0,
+        "keywords_missing": [],
+        "model": "faster-whisper/small.en"
+      }
+    },
+    {
+      "asset_id": "lines_busy",
+      "intent": "lines_busy",
+      "source_text": "I am sorry, all of our lines are busy right now. Please call again in a few minutes.",
+      "file_path": "artifacts/voice-pack/lines_busy.wav",
+      "file_size": 137826,
+      "sha256": "e0fb09a37d78dd1609282fddec045d5b9e8bcdc0d8a941be7b10fac19da337bc",
+      "raw_sha256": "02b8725163b546ad170a709f04c6e42eb9074284667ab80cbf6d85eb9a835e26",
+      "duration_seconds": 8.609,
+      "sample_rate": 8000,
+      "channels": 1,
+      "sample_width": 2,
+      "frames": 68874,
+      "seed": 20264263,
+      "attempt": 2,
+      "generation_seconds": 117.3,
+      "generated_at": "2026-09-26T14:55:31.811279+00:00",
+      "generation_status": "fish_http_reference_conditioned",
+      "validation_status": "asr_verified",
+      "acoustic": {
+        "sample_rate": 8000,
+        "channels": 1,
+        "sample_width": 2,
+        "frames": 68874,
+        "duration_seconds": 8.609,
+        "word_count": 18,
+        "seconds_per_word": 0.478,
+        "active_fraction": 0.56,
+        "energy_modulation": 0.594,
+        "peak_dbfs": -1.98
+      },
+      "asr_model": "faster-whisper/small.en",
+      "asr": {
+        "transcript": "I am sorry all of our lines are busy right now, please call again in a few minutes.",
+        "content_wer": 0.0,
+        "content_cer": 0.0,
         "keywords_missing": [],
         "model": "faster-whisper/small.en"
       }

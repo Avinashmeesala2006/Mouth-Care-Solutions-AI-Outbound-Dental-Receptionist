@@ -1,5 +1,8 @@
-from datetime import datetime, timedelta, timezone
-from backend.app.models.domain import Slot, Hold, Booking, BookingStatus, now
+from datetime import timedelta
+
+from backend.app.models.domain import Booking, BookingStatus, Hold, Slot, now
+
+
 class Repo:
  def __init__(self):
   base=now().replace(minute=0,second=0,microsecond=0); self.slots=[Slot(f'demo-slot-{i}',base+timedelta(days=i+1,hours=2+i), service_id='general',duration_minutes=30) for i in range(3)]; self.holds={}; self.bookings={}; self.idempotency={}; self.events=[]; self.callbacks=[]; self.usage={'minutes':0,'sessions':0,'estimated_cost':0.0}

@@ -21,7 +21,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 from ..services.call_state import ACTIVE_STATES, TERMINAL, CallStatus, can_transition
-from .base import CallPolicy, CallRecord, QuotaUsage, ReserveResult, new_request_id, utcnow
+from .base import CallPolicy, CallRecord, QuotaUsage, ReserveResult, new_request_id, phone_tail, utcnow
 from .migrations import status as migration_status
 
 logger = logging.getLogger(__name__)
@@ -152,11 +152,11 @@ class PostgresCallRepository:
         if error:
             sets.append('error = %(error)s')
             params['error'] = error[:2000]
-        if new == CallStatus.DIALING:
+        if new == CallStatus.ORIGINATE_ACCEPTED:
             sets.append('call_start_time = COALESCE(call_start_time, now())')
         if new == CallStatus.ANSWERED:
             sets.append('answer_time = COALESCE(answer_time, now())')
-        if new == CallStatus.CONNECTED:
+        if new == CallStatus.MEDIA_ACTIVE:
             sets.append('connected_time = COALESCE(connected_time, now())')
         if new in TERMINAL:
             sets.append('end_time = now()')
@@ -174,7 +174,7 @@ class PostgresCallRepository:
                 cost = None
             conn.execute('INSERT INTO usage_events (id, channel, provider, session_type, duration_seconds, billable_minutes, '
                          'estimated_cost, outcome) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
-                         (uuid.uuid4(), 'phone', 'twilio', record.direction, duration, math.ceil(duration / 60), cost,
+                         (uuid.uuid4(), 'phone', record.provider, record.direction, duration, math.ceil(duration / 60), cost,
                           record.status))
         return record, True
 
@@ -218,12 +218,16 @@ class PostgresCallRepository:
                 if recent:
                     return ReserveResult(None, 'rate_limited', details={'retry_after_seconds': policy.rate_limit_seconds})
             row = conn.execute(
-                'INSERT INTO calls (id, direction, customer_number, from_number, status, source, session_mode, requested_by, '
+                'INSERT INTO calls (id, direction, customer_number, from_number, status, source, provider, session_mode, '
+                'requested_by, '
                 'idempotency_key, request_name, request_topic, preferred_window, reserved_seconds) VALUES '
-                "(%s, 'outbound', %s, %s, 'CREATED', %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
+                "(%s, 'outbound', %s, %s, 'REQUEST_ACCEPTED', %s, 'twilio', %s, %s, %s, %s, %s, %s, %s) RETURNING *",
                 (uuid.uuid4(), customer_number, from_number, source, session_mode, requested_by, idempotency_key,
                  request_name, request_topic, preferred_window, policy.reserve_seconds)).fetchone()
-            return ReserveResult(_record(row))
+            record = _record(row)
+            if record is not None:
+                self._audit(conn, 'call', record.id, 'outbound_call_reserved', {'source': source, 'requested_by': requested_by})
+            return ReserveResult(record)
 
     def create_inbound_call(self, *, provider_call_id, provider_conversation_id, customer_number,
                             from_number, policy) -> ReserveResult:
@@ -237,15 +241,16 @@ class PostgresCallRepository:
             if blocked:
                 row = conn.execute(
                     'INSERT INTO calls (id, direction, customer_number, from_number, status, termination_reason, source, '
+                    'provider, '
                     'provider_call_id, provider_conversation_id, reserved_seconds, duration_seconds, call_start_time, '
-                    "answer_time, end_time) VALUES (%s, 'inbound', %s, %s, 'FAILED', %s, 'inbound', %s, %s, 0, 0, now(), now(), "
+                    "end_time) VALUES (%s, 'inbound', %s, %s, 'FAILED', %s, 'inbound', 'twilio', %s, %s, 0, 0, now(), "
                     'now()) RETURNING *',
                     (uuid.uuid4(), customer_number, from_number, blocked, provider_call_id, provider_conversation_id)).fetchone()
                 return ReserveResult(_record(row), blocked, details=details)
             row = conn.execute(
-                'INSERT INTO calls (id, direction, customer_number, from_number, status, source, provider_call_id, '
-                "provider_conversation_id, reserved_seconds, call_start_time, answer_time) VALUES (%s, 'inbound', %s, %s, "
-                "'ANSWERED', 'inbound', %s, %s, %s, now(), now()) RETURNING *",
+                'INSERT INTO calls (id, direction, customer_number, from_number, status, source, provider, provider_call_id, '
+                "provider_conversation_id, reserved_seconds, call_start_time) VALUES (%s, 'inbound', %s, %s, "
+                "'CHANNEL_CREATED', 'inbound', 'twilio', %s, %s, %s, now()) RETURNING *",
                 (uuid.uuid4(), customer_number, from_number, provider_call_id, provider_conversation_id,
                  policy.reserve_seconds)).fetchone()
             return ReserveResult(_record(row))
@@ -273,12 +278,13 @@ class PostgresCallRepository:
             return _record(conn.execute('SELECT * FROM calls WHERE provider_conversation_id = %s ORDER BY created_at LIMIT 1',
                                         (provider_conversation_id,)).fetchone())
 
-    def attach_provider_call(self, call_id, *, provider_call_id, provider_conversation_id):
+    def attach_provider_call(self, call_id, *, provider_call_id, provider_conversation_id, channel_name=None):
         with self._conn() as conn, conn.transaction():
             row = conn.execute(
                 'UPDATE calls SET provider_call_id = %s, provider_conversation_id = COALESCE(%s, provider_conversation_id), '
-                'updated_at = now() WHERE id = %s AND (provider_call_id IS NULL OR provider_call_id = %s) RETURNING *',
-                (provider_call_id, provider_conversation_id, call_id, provider_call_id)).fetchone()
+                'channel_name = COALESCE(%s, channel_name), updated_at = now() '
+                'WHERE id = %s AND (provider_call_id IS NULL OR provider_call_id = %s) RETURNING *',
+                (provider_call_id, provider_conversation_id, channel_name, call_id, provider_call_id)).fetchone()
             return _record(row) or _record(conn.execute('SELECT * FROM calls WHERE id = %s', (call_id,)).fetchone())
 
     def transition(self, call_id, new_status, *, reason=None, error=None, duration_seconds=None, price=None, rate=None):
@@ -345,22 +351,29 @@ class PostgresCallRepository:
         return [_row(r) for r in rows]
 
     # Captured requests ------------------------------------------------------------------------------
-    def add_appointment_request(self, *, call_id, caller, details):
+    def add_appointment_request(self, *, call_id, caller, details, idempotency_key=None):
         record = {'id': new_request_id('AR'), 'call_id': call_id, 'caller': caller,
                   'patient_name': details.get('patient_name', ''), 'preferred_date': details.get('preferred_date', ''),
                   'preferred_time': details.get('preferred_time', ''), 'reason': details.get('reason', ''),
-                  'status': 'requested'}
+                  'status': 'requested', 'idempotency_key': idempotency_key}
         with self._conn() as conn, conn.transaction():
             row = conn.execute(
                 'INSERT INTO appointment_requests (id, call_id, caller, patient_name, preferred_date, preferred_time, reason, '
-                'status) VALUES (%(id)s, %(call_id)s, %(caller)s, %(patient_name)s, %(preferred_date)s, %(preferred_time)s, '
-                '%(reason)s, %(status)s) RETURNING *', record).fetchone()
+                'status, idempotency_key, confirmed_at, updated_at) VALUES (%(id)s, %(call_id)s, %(caller)s, %(patient_name)s, '
+                '%(preferred_date)s, %(preferred_time)s, %(reason)s, %(status)s, %(idempotency_key)s, now(), now()) '
+                'ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING RETURNING *', record).fetchone()
+            if row is None:   # the same confirmation was already recorded
+                existing = conn.execute('SELECT * FROM appointment_requests WHERE idempotency_key = %s',
+                                        (idempotency_key,)).fetchone()
+                return {**_row(existing), 'replayed': True}
             if caller:
                 conn.execute('INSERT INTO patients (id, name, phone) VALUES (%s, %s, %s) '
                              'ON CONFLICT (phone) WHERE phone IS NOT NULL '
                              'DO UPDATE SET name = COALESCE(NULLIF(excluded.name, %s), patients.name)',
                              (uuid.uuid4(), record['patient_name'] or None, caller, ''))
-        return _row(row)
+            self._audit(conn, 'appointment_request', record['id'], 'appointment_request_created',
+                        {'call_id': str(call_id) if call_id else None, 'status': 'requested'})
+        return {**_row(row), 'replayed': False}
 
     def add_callback(self, *, source, contact, topic, preferred_window, call_id=None):
         with self._conn() as conn:
@@ -382,41 +395,49 @@ class PostgresCallRepository:
 
     # Compliance ---------------------------------------------------------------------------------------
     def record_consent(self, phone_number, *, source, note=None):
-        with self._conn() as conn:
+        with self._conn() as conn, conn.transaction():
             row = conn.execute(
                 "INSERT INTO contact_consents (phone_number, status, source, note, granted_at, revoked_at, updated_at) "
                 "VALUES (%s, 'granted', %s, %s, now(), NULL, now()) ON CONFLICT (phone_number) DO UPDATE SET "
                 "status = 'granted', source = excluded.source, note = excluded.note, granted_at = now(), revoked_at = NULL, "
                 'updated_at = now() RETURNING *', (phone_number, source, note)).fetchone()
+            self._audit(conn, 'consent', phone_tail(phone_number), 'consent_granted', {'source': source})
         return _row(row)
 
     def revoke_consent(self, phone_number, *, source):
-        with self._conn() as conn:
-            conn.execute(
-                "INSERT INTO contact_consents (phone_number, status, source, revoked_at, updated_at) VALUES "
-                "(%s, 'revoked', %s, now(), now()) ON CONFLICT (phone_number) DO UPDATE SET status = 'revoked', "
-                'source = excluded.source, revoked_at = now(), updated_at = now()', (phone_number, source))
+        with self._conn() as conn, conn.transaction():
+            self._revoke(conn, phone_number, source)
+
+    def _revoke(self, conn, phone_number: str, source: str) -> None:
+        conn.execute(
+            "INSERT INTO contact_consents (phone_number, status, source, revoked_at, updated_at) VALUES "
+            "(%s, 'revoked', %s, now(), now()) ON CONFLICT (phone_number) DO UPDATE SET status = 'revoked', "
+            'source = excluded.source, revoked_at = now(), updated_at = now()', (phone_number, source))
+        self._audit(conn, 'consent', phone_tail(phone_number), 'consent_revoked', {'source': source})
 
     def add_dnc(self, phone_number, *, reason, source):
-        with self._conn() as conn:
+        with self._conn() as conn, conn.transaction():
             row = conn.execute(
                 'INSERT INTO do_not_call (phone_number, reason, source) VALUES (%s, %s, %s) ON CONFLICT (phone_number) '
                 'DO UPDATE SET reason = excluded.reason, source = excluded.source RETURNING *',
                 (phone_number, reason, source)).fetchone()
+            self._audit(conn, 'do_not_call', phone_tail(phone_number), 'do_not_call_added', {'source': source})
         return _row(row)
 
     def remove_dnc(self, phone_number):
-        with self._conn() as conn:
-            return conn.execute('DELETE FROM do_not_call WHERE phone_number = %s', (phone_number,)).rowcount > 0
+        with self._conn() as conn, conn.transaction():
+            removed = conn.execute('DELETE FROM do_not_call WHERE phone_number = %s', (phone_number,)).rowcount > 0
+            if removed:
+                self._audit(conn, 'do_not_call', phone_tail(phone_number), 'do_not_call_removed', {})
+            return removed
 
     def record_opt_out(self, phone_number, *, source, call_id=None):
         with self._conn() as conn, conn.transaction():
             row = conn.execute('INSERT INTO opt_outs (phone_number, source, call_id) VALUES (%s, %s, %s) RETURNING *',
                                (phone_number, source, call_id)).fetchone()
-            conn.execute(
-                "INSERT INTO contact_consents (phone_number, status, source, revoked_at, updated_at) VALUES "
-                "(%s, 'revoked', %s, now(), now()) ON CONFLICT (phone_number) DO UPDATE SET status = 'revoked', "
-                'source = excluded.source, revoked_at = now(), updated_at = now()', (phone_number, f'opt_out:{source}'))
+            self._revoke(conn, phone_number, f'opt_out:{source}')
+            self._audit(conn, 'opt_out', phone_tail(phone_number), 'opt_out_recorded',
+                        {'source': source, 'call_id': str(call_id) if call_id else None})
         return _row(row)
 
     def clear_opt_out(self, phone_number, *, reason):
@@ -424,15 +445,28 @@ class PostgresCallRepository:
             count = conn.execute('UPDATE opt_outs SET cleared_at = now(), cleared_reason = %s WHERE phone_number = %s '
                                  'AND cleared_at IS NULL', (reason, phone_number)).rowcount
             if count:
-                conn.execute('INSERT INTO audit_events (id, entity_type, entity_id, event_type, payload) '
-                             'VALUES (%s, %s, %s, %s, %s)',
-                             (uuid.uuid4(), 'opt_out', phone_number[-4:], 'opt_out_cleared',
-                              Jsonb({'reason': reason, 'rows': count})))
+                self._audit(conn, 'opt_out', phone_tail(phone_number), 'opt_out_cleared', {'reason': reason, 'rows': count})
             return count
 
     def compliance_status(self, phone_number):
         with self._conn() as conn:
             return self._compliance(conn, phone_number)
+
+    # Audit ------------------------------------------------------------------------------------------------
+    @staticmethod
+    def _audit(conn, entity_type: str, entity_id: str, event_type: str, payload: dict | None) -> None:
+        conn.execute('INSERT INTO audit_events (id, entity_type, entity_id, event_type, payload) VALUES (%s, %s, %s, %s, %s)',
+                     (uuid.uuid4(), entity_type, entity_id, event_type,
+                      Jsonb(json.loads(json.dumps(payload or {}, default=str)))))
+
+    def audit(self, entity_type, entity_id, event_type, payload=None):
+        with self._conn() as conn, conn.transaction():
+            self._audit(conn, entity_type, entity_id, event_type, payload)
+
+    def audit_events(self, limit=100):
+        with self._conn() as conn:
+            rows = conn.execute('SELECT * FROM audit_events ORDER BY created_at DESC LIMIT %s', (limit,)).fetchall()
+        return [_row(r) for r in rows]
 
     # Quota -----------------------------------------------------------------------------------------------
     def quota_usage(self, policy):

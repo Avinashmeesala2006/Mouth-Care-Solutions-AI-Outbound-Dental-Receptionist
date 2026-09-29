@@ -38,7 +38,8 @@ NGROK_HEADERS = {'ngrok-skip-browser-warning': 'true', 'Accept': 'application/js
 # E.164 prefix -> ISO country (longest prefix wins). Used for Twilio voice dialing permissions.
 COUNTRY_PREFIXES = {'91': 'IN', '1': 'US', '44': 'GB', '61': 'AU', '971': 'AE', '65': 'SG', '966': 'SA', '974': 'QA',
                     '49': 'DE', '33': 'FR', '64': 'NZ', '27': 'ZA', '880': 'BD', '94': 'LK', '977': 'NP'}
-TWILIO_STATUS = {'queued': CallStatus.DIALING, 'initiated': CallStatus.DIALING, 'ringing': CallStatus.RINGING,
+TWILIO_STATUS = {'queued': CallStatus.ORIGINATE_ACCEPTED, 'initiated': CallStatus.ORIGINATE_ACCEPTED,
+                 'ringing': CallStatus.RINGING,
                  'in-progress': CallStatus.ANSWERED, 'answered': CallStatus.ANSWERED, 'completed': CallStatus.COMPLETED,
                  'busy': CallStatus.BUSY, 'no-answer': CallStatus.NO_ANSWER, 'failed': CallStatus.FAILED,
                  'canceled': CallStatus.CANCELLED}
@@ -363,7 +364,7 @@ class TwilioTelephony:
                 status_callback=f'{cfg.status_callback_url}?session_id={call.id}')
         except TwilioError as exc:
             unknown = exc.error == 'twilio_outcome_unknown'
-            self.repo.transition(call.id, CallStatus.DIALING if unknown else CallStatus.FAILED,
+            self.repo.transition(call.id, CallStatus.ORIGINATE_ACCEPTED if unknown else CallStatus.FAILED,
                                  reason=exc.error, error=str(exc.details.get('twilio_message') or '')[:500] or None)
             self.repo.add_event(call.id, 'twilio_create_call_failed', {'error': exc.error, **{
                 k: v for k, v in exc.details.items() if k in {'stage', 'code', 'http_status', 'twilio_code', 'twilio_message',
@@ -374,10 +375,10 @@ class TwilioTelephony:
             exc.details['session_id'] = call.id
             raise
         self.repo.attach_provider_call(call.id, provider_call_id=created.sid, provider_conversation_id=None)
-        dialing, _ = self.repo.transition(call.id, CallStatus.DIALING)
+        accepted, _ = self.repo.transition(call.id, CallStatus.ORIGINATE_ACCEPTED)
         self.repo.add_event(call.id, 'twilio_call_created', {'status': created.status})
         logger.info('twilio_call_created session=%s sid=%s to=%s', call.id[:8], mask_id(created.sid), mask_phone(phone))
-        return dialing or call, created, False
+        return accepted or call, created, False
 
     async def hangup(self, call: CallRecord) -> bool:
         if not (call.provider_call_id and self.settings.twilio_enabled):

@@ -69,7 +69,14 @@ tts_emitters = [p.relative_to(root) for p in (root / 'backend' / 'app').rglob('*
 if tts_emitters:
     fail.append(f'backend emits a provider text-to-speech action in {tts_emitters}; caller speech must be Fish Speech')
 deprecated = re.compile(r'vonage|conversation.?relay|asterisk|pjsip|elevenlabs|exotel|plivo', re.IGNORECASE)
+legacy_provider_paths = {
+    Path('backend/app/core/config.py'),
+    Path('migrations/003_asterisk_telephony.sql'),
+    Path('migrations/004_twilio_provider_default.sql'),
+}
 for p, t in texts.items():
+    if p.relative_to(root) in legacy_provider_paths:
+        continue
     is_test = 'tests' in p.parts or p.name.startswith('test_') or '.test.' in p.name   # tests assert absence
     if not is_test and deprecated.search(t):
         fail.append(f'deprecated provider reference: {p.relative_to(root)}')

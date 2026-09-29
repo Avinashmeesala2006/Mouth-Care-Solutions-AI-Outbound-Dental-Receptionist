@@ -1,11 +1,11 @@
-"""Call-state repository contract, run against the in-memory store and real PostgreSQL."""
+"""SOFTWARE TEST - call-state repository contract, run against the in-memory store and real PostgreSQL."""
 import threading
 from datetime import timedelta
 
 import pytest
 from conftest import OTHER, PATIENT
 
-from backend.app.db.base import CallPolicy
+from backend.app.db.base import CallPolicy, appointment_idempotency_key
 from backend.app.db.memory import InMemoryCallRepository
 from backend.app.services.call_state import CallStatus
 
@@ -42,7 +42,8 @@ def test_outbound_checks_run_in_the_required_order(repo):
     assert repo.clear_opt_out(PATIENT, reason='new written consent received at the clinic desk') == 1
     repo.record_consent(PATIENT, source='test')
     result = reserve(repo)
-    assert result.blocked is None and result.call.status == 'CREATED' and result.call.reserved_seconds == 900
+    assert result.blocked is None and result.call.status == 'REQUEST_ACCEPTED' and result.call.reserved_seconds == 900
+    assert result.call.provider == 'twilio'
 
 
 def test_idempotency_key_returns_the_same_call(repo):
@@ -76,14 +77,18 @@ def test_rate_limit_applies_to_dialed_calls_only(repo):
 def test_lifecycle_is_monotonic_and_completion_consumes_quota(repo):
     repo.record_consent(PATIENT, source='test')
     call = reserve(repo).call
-    repo.attach_provider_call(call.id, provider_call_id='CA-1', provider_conversation_id='CON-1')
-    for status in (CallStatus.DIALING, CallStatus.RINGING, CallStatus.ANSWERED, CallStatus.CONNECTED, CallStatus.ACTIVE):
+    attached = repo.attach_provider_call(call.id, provider_call_id='chan-1', provider_conversation_id='CON-1',
+                                         channel_name='PJSIP/gsm-gateway-00000001')
+    assert attached.channel_name == 'PJSIP/gsm-gateway-00000001'
+    for status in (CallStatus.ORIGINATE_ACCEPTED, CallStatus.CHANNEL_CREATED, CallStatus.RINGING, CallStatus.ANSWERED,
+                   CallStatus.MEDIA_ACTIVE):
         assert repo.transition(call.id, status)[1]
     assert repo.transition(call.id, CallStatus.RINGING)[1] is False               # late event never regresses
-    assert repo.get_call_by_provider_id('CA-1').status == 'ACTIVE'
+    assert repo.get_call_by_provider_id('chan-1').status == 'MEDIA_ACTIVE'
     assert repo.get_call_by_conversation_id('CON-1').id == call.id
     done, changed = repo.transition(call.id, CallStatus.COMPLETED, reason='completed', duration_seconds=125, price='0.01')
     assert changed and done.duration_seconds == 125 and done.end_time and done.answer_time and done.connected_time
+    assert done.call_start_time
     usage = repo.quota_usage(POLICY)
     assert (usage.consumed_seconds, usage.reserved_seconds, usage.active_calls) == (125, 0, 0)
     assert repo.transition(call.id, CallStatus.FAILED)[1] is False               # terminal is final
@@ -92,7 +97,7 @@ def test_lifecycle_is_monotonic_and_completion_consumes_quota(repo):
 def test_late_duration_is_recorded_for_an_already_terminal_call(repo):
     repo.record_consent(PATIENT, source='test')
     call = reserve(repo).call
-    repo.transition(call.id, CallStatus.FAILED, reason='answer_webhook_failed')
+    repo.transition(call.id, CallStatus.FAILED, reason='asterisk_originate_rejected')
     updated, changed = repo.transition(call.id, CallStatus.NO_ANSWER, duration_seconds=9)
     assert not changed and updated.status == 'FAILED' and updated.duration_seconds == 9
 
@@ -114,8 +119,9 @@ def test_stale_calls_expire_and_release_capacity(repo):
 
 
 def test_provider_events_are_deduplicated(repo):
-    assert repo.add_event(None, 'twilio_ringing', {'status': 'ringing'}, provider_call_id='CA-1', dedupe_key='twilio:CA-1:ringing:t1')
-    assert not repo.add_event(None, 'twilio_ringing', {'status': 'ringing'}, provider_call_id='CA-1', dedupe_key='twilio:CA-1:ringing:t1')
+    key = 'ari:chan-1:ChannelStateChange:2026-09-27T10:00:00.000+0000'
+    assert repo.add_event(None, 'asterisk_channel_state', {'state': 'Ringing'}, provider_call_id='chan-1', dedupe_key=key)
+    assert not repo.add_event(None, 'asterisk_channel_state', {'state': 'Ringing'}, provider_call_id='chan-1', dedupe_key=key)
     assert repo.add_event(None, 'note', {'n': 1}) and repo.add_event(None, 'note', {'n': 1})
 
 
@@ -123,7 +129,9 @@ def test_inbound_calls_are_created_once_and_respect_capacity(repo):
     policy = CallPolicy(quota_seconds=10**6, max_concurrent=1, reserve_seconds=900, stale_after_seconds=3600)
     first = repo.create_inbound_call(provider_call_id='in-1', provider_conversation_id='CON-in-1', customer_number=PATIENT,
                                      from_number='+12025550100', policy=policy)
-    assert first.blocked is None and first.call.status == 'ANSWERED' and first.call.direction == 'inbound'
+    # The inbound channel exists; it is ANSWERED only after Asterisk answers it.
+    assert first.blocked is None and first.call.status == 'CHANNEL_CREATED' and first.call.direction == 'inbound'
+    assert first.call.answer_time is None
     again = repo.create_inbound_call(provider_call_id='in-1', provider_conversation_id='CON-in-1', customer_number=PATIENT,
                                      from_number=None, policy=policy)
     assert again.replayed and again.call.id == first.call.id
@@ -135,9 +143,9 @@ def test_inbound_calls_are_created_once_and_respect_capacity(repo):
 def test_sessions_turns_and_captured_requests(repo):
     repo.record_consent(PATIENT, source='test')
     call = reserve(repo).call
-    repo.save_session(call.id, {'stage': 'collect_time', 'appointment': {'preferred_date': 'Monday'}})
-    repo.save_session(call.id, {'stage': 'confirm', 'appointment': {'preferred_date': 'Monday'}})
-    assert repo.load_session(call.id)['stage'] == 'confirm'
+    repo.save_session(call.id, {'stage': 'TIME', 'appointment': {'preferred_date': 'Monday'}})
+    repo.save_session(call.id, {'stage': 'CONFIRMATION', 'appointment': {'preferred_date': 'Monday'}})
+    assert repo.load_session(call.id)['stage'] == 'CONFIRMATION'
     repo.add_turn(call.id, {'turn_index': 1, 'transcript': 'monday', 'intent': 'appointment_preferred_date',
                             'prompts': ['ask_preferred_time'], 'stt_latency_ms': 350, 'total_turn_latency_ms': 1200})
     assert repo.turns(call.id)[0]['stt_latency_ms'] == 350
@@ -145,6 +153,7 @@ def test_sessions_turns_and_captured_requests(repo):
     callback = repo.add_callback(source='phone', contact=PATIENT, topic='price question', preferred_window='To be arranged',
                                  call_id=call.id)
     assert appointment['id'].startswith('AR-') and repo.appointment_requests()[0]['patient_name'] == 'Asha'
+    assert appointment['replayed'] is False and appointment['status'] == 'requested'
     assert callback['status'] == 'queued' and repo.callbacks()[0]['topic'] == 'price question'
 
 
@@ -166,3 +175,33 @@ def test_concurrent_reservations_never_exceed_the_limit(repo):
     assert sum(1 for r in results if r.blocked is None) == 3
     assert {r.blocked for r in results if r.blocked} == {'capacity_reached'}
     assert repo.quota_usage(policy).active_calls == 3
+
+
+def test_duplicate_appointment_confirmations_record_one_request(repo):
+    repo.record_consent(PATIENT, source='test')
+    call = reserve(repo).call
+    details = {'patient_name': 'Asha', 'reason': 'cleaning', 'preferred_date': 'Monday', 'preferred_time': '11 am'}
+    key = appointment_idempotency_key(call.id, details)
+    first = repo.add_appointment_request(call_id=call.id, caller=PATIENT, details=details, idempotency_key=key)
+    again = repo.add_appointment_request(call_id=call.id, caller=PATIENT,
+                                         details={**details, 'patient_name': '  asha '}, idempotency_key=key)
+    assert first['replayed'] is False and again['replayed'] is True and again['id'] == first['id']
+    assert len(repo.appointment_requests()) == 1
+    assert key == appointment_idempotency_key(call.id, {**details, 'patient_name': 'ASHA'})   # normalized
+    assert key != appointment_idempotency_key(call.id, {**details, 'preferred_time': '5 pm'})
+
+
+def test_compliance_and_appointment_changes_are_audited_without_full_numbers(repo):
+    repo.record_consent(PATIENT, source='web_form')
+    repo.add_dnc(OTHER, reason='asked by phone', source='test')
+    repo.record_opt_out(PATIENT, source='voice')
+    call = repo.create_inbound_call(provider_call_id='in-9', provider_conversation_id=None, customer_number=PATIENT,
+                                    from_number=None, policy=POLICY).call
+    repo.add_appointment_request(call_id=call.id, caller=PATIENT, details={'patient_name': 'Asha'},
+                                 idempotency_key=appointment_idempotency_key(call.id, {'patient_name': 'Asha'}))
+    events = repo.audit_events()
+    kinds = {e['event_type'] for e in events}
+    assert {'consent_granted', 'do_not_call_added', 'opt_out_recorded', 'consent_revoked',
+            'appointment_request_created'} <= kinds
+    assert PATIENT not in str(events) and OTHER not in str(events)
+    assert any(e['entity_id'] == PATIENT[-4:] for e in events if e['event_type'] == 'opt_out_recorded')

@@ -1,12 +1,27 @@
-"""Unified call lifecycle, independent of the telephony provider.
+"""Unified call lifecycle, independent of the telephony implementation.
 
-    CREATED -> DIALING -> RINGING -> ANSWERED -> CONNECTED -> ACTIVE -> ENDING -> COMPLETED
+    REQUEST_ACCEPTED -> ORIGINATE_ACCEPTED -> CHANNEL_CREATED -> RINGING -> ANSWERED -> MEDIA_ACTIVE
+        -> ENDING -> COMPLETED
     failure states: FAILED, BUSY, NO_ANSWER, TIMEOUT, CANCELLED
 
-Transitions only move forward (webhooks can arrive late, duplicated or out of order), and a
-terminal state is final. ``ENDING`` means the application asked for the call to end. With Twilio
-TwiML a call goes ANSWERED -> ENDING/COMPLETED; ``CONNECTED``/``ACTIVE`` are kept for streamed-media
-sessions and remain valid lifecycle states in the database schema.
+Each state is set only from evidence of that state:
+
+* ``REQUEST_ACCEPTED``   - the application validated the destination and reserved the call.
+* ``ORIGINATE_ACCEPTED`` - the active telephony provider accepted the originate request.
+* ``CHANNEL_CREATED``    - the provider returned/reported the outbound channel object.
+* ``ORIGINATE_ACCEPTED`` - the active telephony provider accepted the originate request.
+* ``CHANNEL_CREATED``    - the provider returned/reported the outbound channel object.
+* ``RINGING``            - the channel state became ``Ringing`` (the gateway signalled 180/183).
+* ``ANSWERED``           - the far end answered (channel ``Up`` / ``StasisStart``). Never inferred
+  from a successful originate.
+* ``MEDIA_ACTIVE``       - the provider started playing receptionist audio on the answered channel.
+* ``ENDING``             - the application asked the provider to hang up.
+* ``MEDIA_ACTIVE``       - the provider started playing receptionist audio on the answered channel.
+* ``ENDING``             - the application asked the provider to hang up.
+
+Transitions only move forward (events can arrive late, duplicated or out of order) and a
+terminal state is final. A state may be skipped (a gateway that sends no ringing indication goes
+straight from ``CHANNEL_CREATED`` to ``ANSWERED``).
 """
 from __future__ import annotations
 
@@ -14,12 +29,12 @@ from enum import Enum
 
 
 class CallStatus(str, Enum):
-    CREATED = 'CREATED'
-    DIALING = 'DIALING'
+    REQUEST_ACCEPTED = 'REQUEST_ACCEPTED'
+    ORIGINATE_ACCEPTED = 'ORIGINATE_ACCEPTED'
+    CHANNEL_CREATED = 'CHANNEL_CREATED'
     RINGING = 'RINGING'
     ANSWERED = 'ANSWERED'
-    CONNECTED = 'CONNECTED'
-    ACTIVE = 'ACTIVE'
+    MEDIA_ACTIVE = 'MEDIA_ACTIVE'
     ENDING = 'ENDING'
     COMPLETED = 'COMPLETED'
     FAILED = 'FAILED'
@@ -29,16 +44,21 @@ class CallStatus(str, Enum):
     CANCELLED = 'CANCELLED'
 
 
-_RANK = {CallStatus.CREATED: 0, CallStatus.DIALING: 1, CallStatus.RINGING: 2, CallStatus.ANSWERED: 3,
-         CallStatus.CONNECTED: 4, CallStatus.ACTIVE: 5, CallStatus.ENDING: 6}
+_RANK = {CallStatus.REQUEST_ACCEPTED: 0, CallStatus.ORIGINATE_ACCEPTED: 1, CallStatus.CHANNEL_CREATED: 2,
+         CallStatus.RINGING: 3, CallStatus.ANSWERED: 4, CallStatus.MEDIA_ACTIVE: 5, CallStatus.ENDING: 6}
 TERMINAL = frozenset({CallStatus.COMPLETED, CallStatus.FAILED, CallStatus.BUSY, CallStatus.NO_ANSWER,
                       CallStatus.TIMEOUT, CallStatus.CANCELLED})
 ACTIVE_STATES = frozenset(_RANK)
-ANSWERED_STATES = frozenset({CallStatus.ANSWERED, CallStatus.CONNECTED, CallStatus.ACTIVE, CallStatus.ENDING})
+ANSWERED_STATES = frozenset({CallStatus.ANSWERED, CallStatus.MEDIA_ACTIVE, CallStatus.ENDING})
 
 
 def is_terminal(status: str | CallStatus) -> bool:
     return CallStatus(status) in TERMINAL
+
+
+def was_answered(status: str | CallStatus, answer_time: object = None) -> bool:
+    """True when the call reached the far end (answered now, or answered before it ended)."""
+    return CallStatus(status) in ANSWERED_STATES or answer_time is not None
 
 
 def can_transition(current: str | CallStatus, new: str | CallStatus) -> bool:

@@ -13,7 +13,7 @@ import secrets
 import sys
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from .api.readiness import live_call_readiness
@@ -263,7 +263,7 @@ async def public_status():
 
 # Outbound calls requested from the web client ------------------------------------------------------
 @app.post('/api/calls/request')
-async def call_request(r: CallRequest):
+async def call_request(r: CallRequest, idempotency_key: str | None = Header(default=None, alias='Idempotency-Key')):
     if not r.consent:
         raise HTTPException(400, 'consent_required')
     destination = normalize_e164(r.patient_contact, settings.default_country_code)
@@ -274,16 +274,37 @@ async def call_request(r: CallRequest):
                                        topic=f'{r.name}: {r.topic}', preferred_window=r.preferred_window)
         return {'request_id': item['id'], 'status': 'queued', 'mode': 'demo',
                 'message': 'Your call request has been received.'}
+    if not idempotency_key or len(idempotency_key) > 128:
+        raise HTTPException(400, 'idempotency_key_required')
+    cfg = settings.resolve()
+    if cfg.errors:
+        raise HTTPException(503, {'error': 'configuration_invalid', 'errors': cfg.errors})
+    if cfg.allowed_destinations and destination not in cfg.allowed_destinations:
+        raise HTTPException(403, {'error': 'destination_not_allowed'})
+    await asyncio.to_thread(runtime.repo.record_consent, destination, source='web_form')
+    readiness = await live_call_readiness(runtime, destination, verify_remote=True, max_age=0)
+    if not readiness['LIVE_CALL_ALLOWED']:
+        blockers = readiness['BLOCKERS']
+        if any('DESTINATION_ON_DO_NOT_CALL_LIST' in blocker for blocker in blockers):
+            raise HTTPException(403, {'error': 'do_not_call'})
+        if any('DESTINATION_OPTED_OUT' in blocker for blocker in blockers):
+            raise HTTPException(403, {'error': 'opted_out'})
+        if any('QUOTA_EXHAUSTED' in blocker for blocker in blockers):
+            raise HTTPException(429, {'error': 'quota_exhausted'})
+        if any('CONCURRENCY_LIMIT_REACHED' in blocker for blocker in blockers):
+            raise HTTPException(429, {'error': 'capacity_reached'})
+        raise HTTPException(503, {'error': 'live_call_not_authorized', 'blockers': readiness['BLOCKERS']})
     try:
         call, created, replayed = await runtime.telephony.request_outbound(
             destination, source='web_form', requested_by='web', record_consent_source='web_form',
+            idempotency_key=idempotency_key,
             request_name=r.name, request_topic=r.topic, preferred_window=r.preferred_window)
     except TwilioError as exc:
         logger.warning('web_call_request_rejected error=%s stage=%s twilio_code=%s request_id=%s to=%s', exc.error,
                        exc.details.get('stage', 'application'), exc.details.get('twilio_code'),
                        exc.details.get('twilio_request_id'), mask_phone(destination))
         raise HTTPException(exc.status_code, {'error': exc.error, **exc.details}) from exc
-    return {'request_id': call.id, 'call_id': created.sid, 'status': call.status,
+    return {'request_id': call.id, 'call_id': created.sid or None, 'status': call.status, 'replayed': replayed,
             'mode': 'live', 'message': 'Your call request has been received.'}
 
 

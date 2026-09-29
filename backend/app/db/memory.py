@@ -12,7 +12,7 @@ import uuid
 from datetime import timedelta
 
 from ..services.call_state import ACTIVE_STATES, TERMINAL, CallStatus, can_transition
-from .base import CallPolicy, CallRecord, QuotaUsage, ReserveResult, new_request_id, utcnow
+from .base import CallPolicy, CallRecord, QuotaUsage, ReserveResult, new_request_id, phone_tail, utcnow
 
 
 class InMemoryCallRepository:
@@ -30,6 +30,7 @@ class InMemoryCallRepository:
         self._consents: dict[str, dict] = {}
         self._dnc: dict[str, dict] = {}
         self._opt_outs: list[dict] = []
+        self._audit: list[dict] = []
         self.usage_events: list[dict] = []
         self._event_seq = 0
 
@@ -82,11 +83,11 @@ class InMemoryCallRepository:
             call.termination_reason = reason
         if error:
             call.error = error[:2000]
-        if new == CallStatus.DIALING and call.call_start_time is None:
+        if new == CallStatus.ORIGINATE_ACCEPTED and call.call_start_time is None:
             call.call_start_time = now
         if new == CallStatus.ANSWERED and call.answer_time is None:
             call.answer_time = now
-        if new == CallStatus.CONNECTED and call.connected_time is None:
+        if new == CallStatus.MEDIA_ACTIVE and call.connected_time is None:
             call.connected_time = now
         if new in TERMINAL:
             call.end_time = now
@@ -95,7 +96,8 @@ class InMemoryCallRepository:
             elif call.duration_seconds is None:
                 call.duration_seconds = 0
             call.price, call.rate = price or call.price, rate or call.rate
-            self.usage_events.append({'call_id': call.id, 'duration_seconds': call.duration_seconds, 'outcome': call.status})
+            self.usage_events.append({'call_id': call.id, 'provider': call.provider, 'duration_seconds': call.duration_seconds,
+                                      'outcome': call.status})
         return True
 
     def _expire(self, stale_after_seconds: int) -> int:
@@ -137,12 +139,14 @@ class InMemoryCallRepository:
                 if recent:
                     return ReserveResult(None, 'rate_limited', details={'retry_after_seconds': policy.rate_limit_seconds})
             call = CallRecord(id=str(uuid.uuid4()), direction='outbound', customer_number=customer_number,
-                              status=CallStatus.CREATED.value, source=source, session_mode=session_mode,
+                              status=CallStatus.REQUEST_ACCEPTED.value, source=source, session_mode=session_mode,
+                              provider='twilio',
                               from_number=from_number,
                               requested_by=requested_by, idempotency_key=idempotency_key, request_name=request_name,
                               request_topic=request_topic, preferred_window=preferred_window,
                               reserved_seconds=policy.reserve_seconds)
             self._calls[call.id] = call
+            self._audit_locked('call', call.id, 'outbound_call_reserved', {'source': source, 'requested_by': requested_by})
             return ReserveResult(copy.deepcopy(call))
 
     def create_inbound_call(self, *, provider_call_id, provider_conversation_id, customer_number,
@@ -154,11 +158,12 @@ class InMemoryCallRepository:
                 return ReserveResult(copy.deepcopy(existing), replayed=True)
             blocked, details = self._capacity_block(policy)
             now = utcnow()
+            # The inbound channel exists but is not answered yet.
             call = CallRecord(id=str(uuid.uuid4()), direction='inbound', customer_number=customer_number,
-                              status=CallStatus.ANSWERED.value, source='inbound', from_number=from_number,
+                              status=CallStatus.CHANNEL_CREATED.value, source='inbound', provider='twilio',
+                              from_number=from_number,
                               provider_call_id=provider_call_id, provider_conversation_id=provider_conversation_id,
-                              reserved_seconds=0 if blocked else policy.reserve_seconds,
-                              call_start_time=now, answer_time=now)
+                              reserved_seconds=0 if blocked else policy.reserve_seconds, call_start_time=now)
             if blocked:
                 call.status, call.termination_reason, call.end_time, call.duration_seconds = \
                     CallStatus.FAILED.value, blocked, now, 0
@@ -186,7 +191,7 @@ class InMemoryCallRepository:
                          if provider_conversation_id and c.provider_conversation_id == provider_conversation_id), None)
             return copy.deepcopy(call) if call else None
 
-    def attach_provider_call(self, call_id, *, provider_call_id, provider_conversation_id):
+    def attach_provider_call(self, call_id, *, provider_call_id, provider_conversation_id, channel_name=None):
         with self._lock:
             call = self._calls.get(str(call_id))
             if not call:
@@ -194,6 +199,7 @@ class InMemoryCallRepository:
             if call.provider_call_id in (None, provider_call_id):
                 call.provider_call_id = provider_call_id
                 call.provider_conversation_id = provider_conversation_id or call.provider_conversation_id
+                call.channel_name = channel_name or call.channel_name
                 call.updated_at = utcnow()
             return copy.deepcopy(call)
 
@@ -250,14 +256,22 @@ class InMemoryCallRepository:
             return copy.deepcopy(self._turns.get(str(call_id), []))
 
     # Captured requests ---------------------------------------------------------------------
-    def add_appointment_request(self, *, call_id, caller, details):
-        record = {'id': new_request_id('AR'), 'call_id': str(call_id) if call_id else None, 'caller': caller,
-                  'patient_name': details.get('patient_name', ''), 'preferred_date': details.get('preferred_date', ''),
-                  'preferred_time': details.get('preferred_time', ''), 'reason': details.get('reason', ''),
-                  'status': 'requested', 'created_at': utcnow().isoformat()}
+    def add_appointment_request(self, *, call_id, caller, details, idempotency_key=None):
+        now = utcnow().isoformat()
         with self._lock:
+            if idempotency_key:
+                existing = next((r for r in self._appointments if r['idempotency_key'] == idempotency_key), None)
+                if existing:
+                    return {**existing, 'replayed': True}
+            record = {'id': new_request_id('AR'), 'call_id': str(call_id) if call_id else None, 'caller': caller,
+                      'patient_name': details.get('patient_name', ''), 'preferred_date': details.get('preferred_date', ''),
+                      'preferred_time': details.get('preferred_time', ''), 'reason': details.get('reason', ''),
+                      'status': 'requested', 'idempotency_key': idempotency_key, 'confirmed_at': now,
+                      'created_at': now, 'updated_at': now}
             self._appointments.append(record)
-        return dict(record)
+            self._audit_locked('appointment_request', record['id'], 'appointment_request_created',
+                               {'call_id': record['call_id'], 'status': 'requested'})
+            return {**record, 'replayed': False}
 
     def add_callback(self, *, source, contact, topic, preferred_window, call_id=None):
         record = {'id': new_request_id('CB'), 'source': source, 'call_id': str(call_id) if call_id else None, 'contact': contact,
@@ -280,6 +294,7 @@ class InMemoryCallRepository:
         with self._lock:
             self._consents[phone_number] = {'phone_number': phone_number, 'status': 'granted', 'source': source,
                                             'note': note, 'granted_at': now, 'revoked_at': None}
+            self._audit_locked('consent', phone_tail(phone_number), 'consent_granted', {'source': source})
             return dict(self._consents[phone_number])
 
     def revoke_consent(self, phone_number, *, source):
@@ -290,16 +305,21 @@ class InMemoryCallRepository:
             else:
                 self._consents[phone_number] = {'phone_number': phone_number, 'status': 'revoked', 'source': source,
                                                 'note': None, 'granted_at': None, 'revoked_at': utcnow().isoformat()}
+            self._audit_locked('consent', phone_tail(phone_number), 'consent_revoked', {'source': source})
 
     def add_dnc(self, phone_number, *, reason, source):
         with self._lock:
             self._dnc[phone_number] = {'phone_number': phone_number, 'reason': reason, 'source': source,
                                        'created_at': utcnow().isoformat()}
+            self._audit_locked('do_not_call', phone_tail(phone_number), 'do_not_call_added', {'source': source})
             return dict(self._dnc[phone_number])
 
     def remove_dnc(self, phone_number):
         with self._lock:
-            return self._dnc.pop(phone_number, None) is not None
+            removed = self._dnc.pop(phone_number, None) is not None
+            if removed:
+                self._audit_locked('do_not_call', phone_tail(phone_number), 'do_not_call_removed', {})
+            return removed
 
     def record_opt_out(self, phone_number, *, source, call_id=None):
         with self._lock:
@@ -307,6 +327,8 @@ class InMemoryCallRepository:
                       'created_at': utcnow().isoformat(), 'cleared_at': None, 'cleared_reason': None}
             self._opt_outs.append(record)
             self.revoke_consent(phone_number, source=f'opt_out:{source}')
+            self._audit_locked('opt_out', phone_tail(phone_number), 'opt_out_recorded',
+                               {'source': source, 'call_id': record['call_id']})
             return dict(record)
 
     def clear_opt_out(self, phone_number, *, reason):
@@ -316,11 +338,27 @@ class InMemoryCallRepository:
                 if record['phone_number'] == phone_number and record['cleared_at'] is None:
                     record.update(cleared_at=utcnow().isoformat(), cleared_reason=reason)
                     count += 1
+            if count:
+                self._audit_locked('opt_out', phone_tail(phone_number), 'opt_out_cleared', {'reason': reason, 'rows': count})
             return count
 
     def compliance_status(self, phone_number):
         with self._lock:
             return self._compliance(phone_number)
+
+    # Audit ---------------------------------------------------------------------------------
+    def _audit_locked(self, entity_type: str, entity_id: str, event_type: str, payload: dict | None) -> None:
+        self._audit.append({'id': str(uuid.uuid4()), 'entity_type': entity_type, 'entity_id': entity_id,
+                            'event_type': event_type, 'payload': copy.deepcopy(payload or {}),
+                            'created_at': utcnow().isoformat()})
+
+    def audit(self, entity_type, entity_id, event_type, payload=None):
+        with self._lock:
+            self._audit_locked(entity_type, entity_id, event_type, payload)
+
+    def audit_events(self, limit=100):
+        with self._lock:
+            return copy.deepcopy(list(reversed(self._audit[-limit:])))
 
     # Quota ---------------------------------------------------------------------------------
     def quota_usage(self, policy):

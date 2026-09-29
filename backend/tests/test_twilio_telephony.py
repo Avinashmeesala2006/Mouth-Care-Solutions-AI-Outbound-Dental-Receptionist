@@ -207,17 +207,17 @@ REQUEST = {'name': 'QA Patient', 'patient_contact': PATIENT, 'preferred_window':
 
 def test_call_request_places_exactly_one_call(ready):
     rt = ready()
-    response = TestClient(main.app).post('/api/calls/request', json=REQUEST)
+    response = TestClient(main.app).post('/api/calls/request', json=REQUEST, headers={'Idempotency-Key': 'request-one'})
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body['call_id'].startswith('CA') and body['status'] == 'DIALING'
+    assert body['call_id'].startswith('CA') and body['status'] == 'ORIGINATE_ACCEPTED'
     (created,) = rt.telephony.client.created
     assert created['to'] == PATIENT and created['from_number'] == FROM_NUMBER
     assert created['url'] == f"{PUBLIC}/api/telephony/twilio/outbound?session_id={body['request_id']}"
     assert created['status_callback'] == f"{PUBLIC}/api/telephony/twilio/status?session_id={body['request_id']}"
 
 
-def test_preflight_false_does_not_block_the_request_twilio_decides(ready, monkeypatch):
+def test_preflight_false_blocks_the_request_before_twilio(ready, monkeypatch):
     rt = ready(client=FakeTwilioClient(account_type='Trial', owned=(), verified=()))
 
     async def down(*, max_age=0):
@@ -225,10 +225,10 @@ def test_preflight_false_does_not_block_the_request_twilio_decides(ready, monkey
     monkeypatch.setattr(rt, 'fish_health', down)
     before = preflight(rt)
     assert before['LIVE_CALL_ALLOWED'] is False and before['BLOCKERS']      # the report stays truthful
-    response = TestClient(main.app).post('/api/calls/request', json=REQUEST)
-    assert response.status_code == 200, response.text
-    assert len(rt.telephony.client.created) == 1                              # exactly one Create Call
-    # J. Reaching the provider never turns the readiness report true.
+    response = TestClient(main.app).post('/api/calls/request', json=REQUEST, headers={'Idempotency-Key': 'request-trial'})
+    assert response.status_code == 503, response.text
+    assert response.json()['detail']['error'] == 'live_call_not_authorized'
+    assert rt.telephony.client.created == []
     assert preflight(rt)['LIVE_CALL_ALLOWED'] is False
 
 
@@ -254,7 +254,7 @@ def test_application_safety_checks_still_block_before_twilio(ready, case, status
         rt.repo.record_opt_out(PATIENT, source='voice')
     payload = {**REQUEST, **({'consent': False} if case == 'no_consent_in_form' else {}),
                **({'patient_contact': 'call me maybe'} if case == 'invalid_phone' else {})}
-    response = TestClient(main.app).post('/api/calls/request', json=payload)
+    response = TestClient(main.app).post('/api/calls/request', json=payload, headers={'Idempotency-Key': 'request-safety'})
     detail = response.json()['detail']
     assert response.status_code == status, response.text
     assert (detail['error'] if isinstance(detail, dict) else detail) == error
@@ -273,16 +273,28 @@ def test_stored_consent_is_required_by_the_reservation(ready):
 def test_rate_limit_still_blocks_a_second_request(ready):
     rt = ready()
     client = TestClient(main.app)
-    assert client.post('/api/calls/request', json=REQUEST).status_code == 200
-    again = client.post('/api/calls/request', json=REQUEST)
+    assert client.post('/api/calls/request', json=REQUEST, headers={'Idempotency-Key': 'request-replay'}).status_code == 200
+    again = client.post('/api/calls/request', json=REQUEST, headers={'Idempotency-Key': 'request-replay-second'})
     assert again.status_code == 429 and again.json()['detail']['error'] == 'rate_limited'
+    assert len(rt.telephony.client.created) == 1
+
+
+def test_api_idempotency_replays_without_a_second_provider_call(ready):
+    rt = ready()
+    client = TestClient(main.app)
+    headers = {'Idempotency-Key': 'api-replay-0001'}
+    first = client.post('/api/calls/request', json=REQUEST, headers=headers)
+    second = client.post('/api/calls/request', json=REQUEST, headers=headers)
+    assert first.status_code == second.status_code == 200
+    assert second.json()['replayed'] is True
+    assert second.json()['request_id'] == first.json()['request_id']
     assert len(rt.telephony.client.created) == 1
 
 
 def test_rejected_call_is_recorded_and_never_retried(ready):
     rt = ready(client=FakeTwilioClient(error=TwilioError(502, 'twilio_call_rejected', http_status=400, twilio_code=21219,
                                                         twilio_message='unverified number')))
-    response = TestClient(main.app).post('/api/calls/request', json=REQUEST)
+    response = TestClient(main.app).post('/api/calls/request', json=REQUEST, headers={'Idempotency-Key': 'request-provider-error'})
     assert response.status_code == 502 and response.json()['detail']['twilio_code'] == 21219
     call = rt.repo.get_call(response.json()['detail']['session_id'])
     assert call.status == 'FAILED' and call.termination_reason == 'twilio_call_rejected'
@@ -294,6 +306,15 @@ def test_real_twilio_rejection_is_surfaced_with_sanitized_diagnostics(ready):
 
     def handler(request: httpx.Request):
         requests_seen.append(request)
+        if request.method == 'GET':
+            if request.url.path.endswith('IncomingPhoneNumbers.json'):
+                return httpx.Response(200, json={'incoming_phone_numbers': [
+                    {'phone_number': FROM_NUMBER, 'capabilities': {'voice': True}}]})
+            if request.url.path.endswith('OutgoingCallerIds.json'):
+                return httpx.Response(200, json={'outgoing_caller_ids': []})
+            if '/DialingPermissions/Countries/' in request.url.path:
+                return httpx.Response(200, json={'low_risk_numbers_enabled': True})
+            return httpx.Response(200, json={'status': 'active', 'type': 'Full'})
         return httpx.Response(400, headers={'Twilio-Request-Id': 'RQ' + 'a' * 32}, json={
             'code': 21219, 'status': 400, 'more_info': 'https://www.twilio.com/docs/errors/21219',
             'message': f"The number {PATIENT} is unverified. Trial accounts cannot place calls to unverified numbers "
@@ -301,8 +322,8 @@ def test_real_twilio_rejection_is_surfaced_with_sanitized_diagnostics(ready):
     rt = ready()
     rt.telephony.client = TwilioRestClient(rt.settings.twilio_account_sid, rt.settings.twilio_auth_token,
                                            transport=httpx.MockTransport(handler))
-    response = TestClient(main.app).post('/api/calls/request', json=REQUEST)
-    assert response.status_code == 502 and len(requests_seen) == 1                   # one attempt, never retried
+    response = TestClient(main.app).post('/api/calls/request', json=REQUEST, headers={'Idempotency-Key': 'request-unknown'})
+    assert response.status_code == 502 and sum(request.method == 'POST' for request in requests_seen) == 1  # one create attempt
     detail = response.json()['detail']
     assert detail['error'] == 'twilio_call_rejected' and detail['stage'] == 'twilio_create_call'
     assert detail['http_status'] == 400 and detail['twilio_code'] == 21219

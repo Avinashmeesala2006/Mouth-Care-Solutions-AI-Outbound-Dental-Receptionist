@@ -2,12 +2,16 @@
 in-memory repository. Production always uses PostgreSQL (see ``core.config``)."""
 from __future__ import annotations
 
+import hashlib
+import json
 import secrets
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from ..services.call_state import CallStatus
+
+APPOINTMENT_FIELDS = ('patient_name', 'reason', 'preferred_date', 'preferred_time')
 
 
 def utcnow() -> datetime:
@@ -18,6 +22,22 @@ def new_request_id(prefix: str) -> str:
     return f'{prefix}-{secrets.token_hex(4).upper()}'
 
 
+def phone_tail(phone_number: str | None) -> str:
+    """Audit identifier for a phone number: its last four digits only."""
+    digits = ''.join(ch for ch in phone_number or '' if ch.isdigit())
+    return digits[-4:] if digits else ''
+
+
+def appointment_idempotency_key(call_id: str | None, details: dict) -> str | None:
+    """Stable key for one confirmed request: the same call confirming the same details twice
+    (a retried turn, a duplicated event) records one appointment request."""
+    if not call_id:
+        return None
+    normalized = {k: ' '.join(str(details.get(k) or '').split()).lower() for k in APPOINTMENT_FIELDS}
+    digest = hashlib.sha256(json.dumps(normalized, sort_keys=True).encode('utf-8')).hexdigest()[:24]
+    return f'{call_id}:{digest}'
+
+
 @dataclass
 class CallRecord:
     id: str
@@ -26,9 +46,11 @@ class CallRecord:
     status: str
     source: str
     session_mode: str = 'conversation'
+    provider: str = 'twilio'             # telephony implementation that handled the call
     from_number: str | None = None
-    provider_call_id: str | None = None
+    provider_call_id: str | None = None   # Twilio Call SID for Twilio calls
     provider_conversation_id: str | None = None
+    channel_name: str | None = None
     termination_reason: str | None = None
     requested_by: str | None = None
     idempotency_key: str | None = None
@@ -112,8 +134,8 @@ class CallRepository(Protocol):
     def get_call_by_provider_id(self, provider_call_id: str) -> CallRecord | None: ...
     def get_call_by_idempotency_key(self, idempotency_key: str) -> CallRecord | None: ...
     def get_call_by_conversation_id(self, provider_conversation_id: str) -> CallRecord | None: ...
-    def attach_provider_call(self, call_id: str, *, provider_call_id: str,
-                             provider_conversation_id: str | None) -> CallRecord | None: ...
+    def attach_provider_call(self, call_id: str, *, provider_call_id: str, provider_conversation_id: str | None,
+                             channel_name: str | None = None) -> CallRecord | None: ...
     def transition(self, call_id: str, new_status: CallStatus, *, reason: str | None = None, error: str | None = None,
                    duration_seconds: int | None = None, price: str | None = None,
                    rate: str | None = None) -> tuple[CallRecord | None, bool]: ...
@@ -129,8 +151,10 @@ class CallRepository(Protocol):
     def add_turn(self, call_id: str, turn: dict) -> None: ...
     def turns(self, call_id: str) -> list[dict]: ...
 
-    # Requests captured by the receptionist
-    def add_appointment_request(self, *, call_id: str | None, caller: str, details: dict) -> dict: ...
+    # Requests captured by the receptionist. add_appointment_request is idempotent on
+    # ``idempotency_key``: a repeat returns the existing row with ``replayed=True``.
+    def add_appointment_request(self, *, call_id: str | None, caller: str, details: dict,
+                                idempotency_key: str | None = None) -> dict: ...
     def add_callback(self, *, source: str, contact: str, topic: str, preferred_window: str,
                      call_id: str | None = None) -> dict: ...
     def appointment_requests(self, limit: int = 100) -> list[dict]: ...
@@ -144,6 +168,10 @@ class CallRepository(Protocol):
     def record_opt_out(self, phone_number: str, *, source: str, call_id: str | None = None) -> dict: ...
     def clear_opt_out(self, phone_number: str, *, reason: str) -> int: ...
     def compliance_status(self, phone_number: str) -> dict: ...
+
+    # Audit trail (never contains full phone numbers or secrets)
+    def audit(self, entity_type: str, entity_id: str, event_type: str, payload: dict | None = None) -> None: ...
+    def audit_events(self, limit: int = 100) -> list[dict]: ...
 
     # Quota
     def quota_usage(self, policy: CallPolicy) -> QuotaUsage: ...

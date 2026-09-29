@@ -7,14 +7,15 @@ instead of silently rewriting them.
 
 Environments (``APP_MODE``):
 
-* ``development`` - local work. Twilio may stay disabled, call state may live in memory
+* ``development`` - local work. Asterisk may stay disabled, call state may live in memory
   when ``DATABASE_URL`` is unset (clearly reported), demo booking slots are available.
-* ``staging`` / ``production`` - fail closed: Twilio, PostgreSQL, Fish Speech, signed
-  webhooks and a strong ``JWT_SECRET`` are mandatory, and critical values must be set
-  explicitly (a silently applied default such as a loopback URL is an error).
+* ``staging`` / ``production`` - fail closed: Asterisk, PostgreSQL, Fish Speech, speech
+  recognition and a strong ``JWT_SECRET`` are mandatory.
 
-Telephony is the Twilio Voice API; speech is served by Fish Speech (packaged,
-pre-generated voice assets plus optional live synthesis).
+Telephony is Asterisk, controlled over ARI (REST + WebSocket), dialling a GSM/LTE voice
+gateway over PJSIP/SIP. Caller-facing speech is Fish Speech (the verified voice pack plus
+optional live synthesis); caller speech is recognised locally (faster-whisper).
+``LIVE_CALL_ALLOWED`` is the operator's master switch for placing real calls.
 """
 from __future__ import annotations
 
@@ -40,7 +41,15 @@ APPROVED_CLINIC_PHONE = APPROVED_FACTS['phone']
 E164 = re.compile(r'^\+[1-9]\d{7,14}$')
 APP_MODES = ('development', 'staging', 'production')
 LEGACY_APP_MODES = {'demo': 'development', 'live': 'production'}
-WEAK_SECRETS = {'', 'change-me-in-live-mode', 'replace-in-live-mode', 'changeme', 'secret', 'change-me'}
+WEAK_SECRETS = {'', 'change-me-in-live-mode', 'replace-in-live-mode', 'changeme', 'secret', 'change-me',
+                'password', 'asterisk', 'admin'}
+GATEWAY_MODES = ('register', 'static')
+SIP_CODECS = ('alaw', 'ulaw', 'g722', 'gsm', 'slin')
+DTMF_MODES = ('rfc4733', 'inband', 'info', 'auto')
+STT_PROVIDERS = ('faster-whisper', 'disabled')
+_HOST = re.compile(r'^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?|\[[0-9A-Fa-f:.]+\])$')
+_NAME = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+_DIAL_PLACEHOLDERS = re.compile(r'\{([^{}]*)\}')
 
 
 def _should_ignore_env_file() -> bool:
@@ -96,6 +105,36 @@ def parse_public_origin(value: str, name: str) -> tuple[str, str | None]:
     return f'https://{netloc}', None
 
 
+def parse_http_origin(value: str, name: str) -> tuple[str, str | None]:
+    """Return (origin, error) for an http(s) origin reachable on a private network (no path, no credentials)."""
+    candidate = (value or '').strip().rstrip('/')
+    if not candidate:
+        return '', None
+    try:
+        parsed = urlparse(candidate)
+        parsed.port   # noqa: B018 - validates the port
+    except ValueError:
+        return '', f'{name} is not a valid URL'
+    if parsed.scheme not in {'http', 'https'} or not parsed.hostname:
+        return '', f'{name} must be an http(s) origin such as http://192.168.1.10:8000'
+    if parsed.username or parsed.password:
+        return '', f'{name} must not contain credentials'
+    if parsed.path not in {'', '/'} or parsed.query or parsed.fragment:
+        return '', f'{name} must be an origin only (no path)'
+    return f'{parsed.scheme}://{parsed.netloc}', None
+
+
+def _dial_template_error(template: str) -> str | None:
+    """ASTERISK_DIAL_TEMPLATE must name one technology/resource with exactly one number placeholder."""
+    placeholders = _DIAL_PLACEHOLDERS.findall(template or '')
+    numbers = [p for p in placeholders if p in {'e164', 'digits', 'national'}]
+    if not re.match(r'^[A-Za-z0-9_]+/[^\s,&]+$', template or '') or len(numbers) != 1 \
+            or any(p not in {'e164', 'digits', 'national', 'endpoint'} for p in placeholders):
+        return ('ASTERISK_DIAL_TEMPLATE must look like PJSIP/{e164}@{endpoint} (one of {e164}, {digits}, {national}; '
+                'no spaces, commas or "&")')
+    return None
+
+
 def normalize_e164(value: str | None, default_country_code: str = '91') -> str | None:
     """Normalize a phone number to E.164 (+CC...). Returns None when it cannot be valid.
 
@@ -131,24 +170,33 @@ class ResolvedConfig:
     app_mode: str
     production_like: bool
     twilio_enabled: bool
+    asterisk_enabled: bool
+    live_call_allowed: bool
+    ari_base_url: str            # http(s)://host:port/ari - never contains credentials
+    ari_events_url: str          # ws(s)://host:port/ari/events?app=... - never contains credentials
+    sip_endpoint: str
+    caller_id: str
+    fastapi_base_url: str
     public_origin: str
+    from_number: str
     outbound_url: str
     gather_url: str
     status_callback_url: str
-    from_number: str
     allowed_destinations: list[str]
     quota_seconds: int
-    signature_verification: bool
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    gateway_warnings: list[str] = field(default_factory=list)
 
     @property
     def live(self) -> bool:
-        """True when real telephony is enabled (real calls can be placed)."""
-        return self.twilio_enabled
+        """True when the configured real telephony layer is enabled."""
+        return self.call_provider != 'disabled'
 
     @property
     def call_provider(self) -> str:
+        if self.asterisk_enabled:
+            return 'asterisk'
         return 'twilio' if self.twilio_enabled else 'disabled'
 
 
@@ -161,7 +209,6 @@ class Settings(BaseSettings):
     admin_initial_email: str = ''
     admin_initial_password: str = ''
     jwt_secret: str = 'change-me-in-live-mode'
-    public_base_url: str = Field(default='', validation_alias=AliasChoices('PUBLIC_BASE_URL', 'TWILIO_WEBHOOK_BASE_URL'))
     notification_provider: str = 'mock'
     default_country_code: str = '91'
     log_level: str = 'INFO'
@@ -181,16 +228,68 @@ class Settings(BaseSettings):
     database_pool_max_size: int = 10
     database_auto_migrate: bool = False
 
-    # Telephony: Twilio Voice API ------------------------------------------------------------
+    # Active telephony: Twilio Voice webhooks and REST API ------------------------------------
+    call_provider: str = Field(default='twilio', validation_alias=AliasChoices('CALL_PROVIDER', 'TELEPHONY_PROVIDER'))
     twilio_enabled: bool = False
     twilio_account_sid: str = ''
     twilio_auth_token: str = ''
-    twilio_from_number: str = Field(default='', validation_alias=AliasChoices(
-        'TWILIO_FROM_NUMBER', 'OUTBOUND_FROM_NUMBER', 'TWILIO_PHONE_NUMBER'))
+    twilio_from_number: str = ''
     twilio_validate_signature: bool = True
     twilio_http_timeout_seconds: float = 15.0
     twilio_max_call_seconds: int = 900
     twilio_test_to: str = ''
+    public_base_url: str = ''
+
+    # Legacy telephony: Asterisk over ARI (REST + WebSocket) -------------------------------
+    asterisk_enabled: bool = False
+    asterisk_host: str = '127.0.0.1'           # ARI HTTP server (http.conf); no scheme, no credentials
+    asterisk_port: int = 8088
+    asterisk_use_tls: bool = False             # https/wss to ARI (http.conf tlsenable)
+    asterisk_user: str = Field(default='', validation_alias=AliasChoices('ASTERISK_USER', 'ASTERISK_ARI_USER'))
+    asterisk_password: str = Field(default='', validation_alias=AliasChoices('ASTERISK_PASSWORD', 'ASTERISK_ARI_PASSWORD'))
+    asterisk_ari_app: str = 'mouthcare'        # Stasis application name
+    asterisk_sip_endpoint: str = 'gsm-gateway' # PJSIP endpoint that represents the GSM/LTE gateway
+    asterisk_context: str = 'from-gsm-gateway' # dialplan context for calls arriving from the gateway
+    asterisk_dial_template: str = 'PJSIP/{e164}@{endpoint}'   # {e164} | {digits} | {national}, {endpoint}
+    asterisk_caller_id: str = ''               # optional; a GSM gateway presents the SIM's own number
+    asterisk_sounds_prefix: str = 'mouthcare'  # voice pack installed at <sounds>/<language>/<prefix>/<asset>.wav
+    asterisk_sound_language: str = 'en'
+    asterisk_ring_timeout_seconds: int = 45
+    asterisk_max_call_seconds: int = 900
+    asterisk_http_timeout_seconds: float = 10.0
+    # Rendered Asterisk configuration (scripts/asterisk/render_config.py); FastAPI does not use these at runtime.
+    asterisk_http_bind: str = '127.0.0.1'
+    asterisk_sip_port: int = 5060
+    asterisk_rtp_start: int = 10000
+    asterisk_rtp_end: int = 10100
+    asterisk_local_net: str = ''               # e.g. 192.168.1.0/24 when Asterisk is behind NAT
+    asterisk_external_address: str = ''        # public address advertised in SIP/SDP (only behind NAT)
+
+    # GSM/LTE voice gateway (reached by Asterisk over SIP; FastAPI never talks to it directly) --
+    gsm_gateway_mode: str = 'register'         # register: the gateway registers to Asterisk | static: fixed IP peer
+    gsm_gateway_host: str = ''
+    gsm_gateway_port: int = 5060
+    gsm_gateway_sip_user: str = ''
+    gsm_gateway_sip_password: str = ''
+    gsm_gateway_codecs: str = 'alaw,ulaw'      # G.711 A-law (India/Europe) first, u-law second
+    gsm_gateway_dtmf_mode: str = 'rfc4733'
+    gsm_gateway_qualify_seconds: int = 30
+
+    # Where Asterisk can fetch dynamically generated Fish audio over HTTP (only with live synthesis).
+    fastapi_base_url: str = ''
+
+    # Operator master switch: real calls are placed only when true (and every safety check passes).
+    live_call_allowed: bool = False
+
+    # Speech recognition (local; caller audio never leaves the host) ----------------------------
+    stt_provider: str = 'faster-whisper'       # faster-whisper | disabled
+    stt_model: str = 'base.en'
+    stt_language: str = 'en'
+    stt_device: str = 'cpu'
+    stt_compute_type: str = 'int8'
+    stt_beam_size: int = 5
+    stt_record_max_seconds: int = 15
+    stt_record_max_silence_seconds: int = 3
 
     # Outbound policy, quota and capacity ------------------------------------------------------
     outbound_allowed_destinations: str = ''   # optional allow-list (E.164, comma separated)
@@ -204,7 +303,8 @@ class Settings(BaseSettings):
 
     # Fish Speech (the only TTS engine) ---------------------------------------------------------
     fish_speech_enabled: bool = True
-    fish_speech_base_url: str = 'http://127.0.0.1:8080'
+    fish_speech_base_url: str = Field(default='http://127.0.0.1:8080',
+                                      validation_alias=AliasChoices('FISH_SPEECH_BASE_URL', 'FISH_SPEECH_URL'))
     fish_speech_api_key: str = ''
     fish_speech_model: str = 'fish-speech-1.5'
     fish_speech_version: str = Field(
@@ -254,7 +354,30 @@ class Settings(BaseSettings):
     @property
     def mock_mode(self) -> bool:
         """Compatibility view for the web demo: no real telephony is enabled."""
-        return not self.twilio_enabled
+        return not self.asterisk_enabled
+
+    @property
+    def ari_base_url(self) -> str:
+        return f"{'https' if self.asterisk_use_tls else 'http'}://{self.asterisk_host}:{self.asterisk_port}/ari"
+
+    def dial_endpoint(self, destination_e164: str) -> str:
+        """ARI originate endpoint for an E.164 number, e.g. PJSIP/+919876543210@gsm-gateway."""
+        digits = _digits(destination_e164)
+        cc = _digits(self.default_country_code)
+        national = digits[len(cc):] if cc and digits.startswith(cc) else digits
+        return self.asterisk_dial_template.format(e164='+' + digits, digits=digits, national=national,
+                                                  endpoint=self.asterisk_sip_endpoint)
+
+    def secret_values(self) -> list[str]:
+        """Configured secrets, for redaction of diagnostics (never logged or returned)."""
+        values = [self.asterisk_password, self.gsm_gateway_sip_password, self.twilio_auth_token, self.jwt_secret,
+              self.llm_api_key,
+                  self.openai_api_key, self.fish_speech_api_key, self.admin_initial_password]
+        try:
+            password = urlparse(self.database_url).password if self.database_url else None
+        except ValueError:
+            password = None
+        return [v for v in [*values, password or ''] if v and len(v) >= 4]
 
     def quota_seconds(self) -> int:
         if self.service_quota_seconds is not None:
@@ -273,33 +396,126 @@ class Settings(BaseSettings):
         if mode not in APP_MODES:
             errors.append(f'APP_MODE must be one of {", ".join(APP_MODES)} (got {raw_mode or "unset"})')
         production_like = mode in {'staging', 'production'}
-        # Public URLs --------------------------------------------------------------------------
+        provider = (self.call_provider or '').strip().lower()
+        if provider not in {'twilio', 'asterisk'}:
+            errors.append('CALL_PROVIDER must be one of twilio, asterisk')
+            provider = 'twilio'
+        twilio_active = provider == 'twilio'
+        twilio_required = twilio_active and (self.twilio_enabled or production_like)
+        # Asterisk (ARI) ---------------------------------------------------------------------------
+        ari_base_url, ari_events_url = '', ''
+        if production_like and provider == 'asterisk' and not self.asterisk_enabled:
+            errors.append(f'APP_MODE={mode} requires ASTERISK_ENABLED=true')
+        if production_like and twilio_active and not self.twilio_enabled:
+            errors.append(f'APP_MODE={mode} requires TWILIO_ENABLED=true')
+        if self.asterisk_enabled:
+            missing = [name for name, value in (('ASTERISK_HOST', self.asterisk_host), ('ASTERISK_USER', self.asterisk_user),
+                                                ('ASTERISK_PASSWORD', self.asterisk_password),
+                                                ('ASTERISK_ARI_APP', self.asterisk_ari_app),
+                                                ('ASTERISK_SIP_ENDPOINT', self.asterisk_sip_endpoint)) if not value]
+            if missing:
+                errors.append('ASTERISK_ENABLED=true requires ' + ', '.join(missing))
+        if self.asterisk_host and not _HOST.match(self.asterisk_host):
+            errors.append('ASTERISK_HOST must be a bare host name or IP address (no scheme, path or credentials)')
+        if not 1 <= self.asterisk_port <= 65535:
+            errors.append('ASTERISK_PORT must be between 1 and 65535')
+        for name, value in (('ASTERISK_ARI_APP', self.asterisk_ari_app), ('ASTERISK_SIP_ENDPOINT', self.asterisk_sip_endpoint),
+                            ('ASTERISK_CONTEXT', self.asterisk_context), ('ASTERISK_SOUNDS_PREFIX', self.asterisk_sounds_prefix)):
+            if value and not _NAME.match(value):
+                errors.append(f'{name} may contain only letters, digits, "-" and "_"')
+        template_error = _dial_template_error(self.asterisk_dial_template)
+        if template_error:
+            errors.append(template_error)
+        elif not self.asterisk_dial_template.upper().startswith('PJSIP/'):
+            warnings.append('ASTERISK_DIAL_TEMPLATE does not use PJSIP; the supported gateway path is PJSIP/SIP')
+        caller_id = ''
+        if self.asterisk_caller_id:
+            caller_id = normalize_e164(self.asterisk_caller_id, self.default_country_code) or ''
+            if not caller_id:
+                errors.append('ASTERISK_CALLER_ID must be a valid phone number (or empty: the SIM presents its number)')
+        if not 10 <= self.asterisk_ring_timeout_seconds <= 120:
+            errors.append('ASTERISK_RING_TIMEOUT_SECONDS must be between 10 and 120')
+        if not 60 <= self.asterisk_max_call_seconds <= 3600:
+            errors.append('ASTERISK_MAX_CALL_SECONDS must be between 60 and 3600')
+        if self.asterisk_enabled and self.asterisk_password:
+            weak_ari = self.asterisk_password.lower() in WEAK_SECRETS or len(self.asterisk_password) < 16
+            if weak_ari:
+                (errors if production_like else warnings).append('ASTERISK_PASSWORD is weak (use 16+ random characters)')
+            if not self.asterisk_use_tls and not _is_private_host(self.asterisk_host):
+                warnings.append('ARI is reached over plain HTTP on a non-private host; enable ASTERISK_USE_TLS or keep '
+                                'ARI on loopback/a private network')
+        if not errors or self.asterisk_host:
+            scheme = 'https' if self.asterisk_use_tls else 'http'
+            ari_base_url = f'{scheme}://{self.asterisk_host}:{self.asterisk_port}/ari'
+            ari_events_url = (f"{'wss' if self.asterisk_use_tls else 'ws'}://{self.asterisk_host}:{self.asterisk_port}"
+                              f'/ari/events?app={self.asterisk_ari_app}&subscribeAll=false')
+        if self.live_call_allowed and not self.asterisk_enabled:
+            warnings.append('LIVE_CALL_ALLOWED is not the Twilio authorization gate; use /api/twilio/preflight')
+
+        # Twilio Voice -----------------------------------------------------------------------------
         public_origin, public_error = parse_public_origin(self.public_base_url, 'PUBLIC_BASE_URL')
         if public_error:
-            errors.append(public_error)
+            (errors if twilio_required else warnings).append(public_error)
+        from_number = normalize_e164(self.twilio_from_number, self.default_country_code) if self.twilio_from_number else ''
+        if twilio_required and not self.twilio_account_sid:
+            errors.append('TWILIO_ACCOUNT_SID is required for the active Twilio provider')
+        if twilio_required and not self.twilio_auth_token:
+            errors.append('TWILIO_AUTH_TOKEN is required for the active Twilio provider')
+        if twilio_required and not from_number:
+            errors.append('TWILIO_FROM_NUMBER must be a valid E.164 number for the active Twilio provider')
+        if twilio_required and not public_origin:
+            errors.append('PUBLIC_BASE_URL must be a public https origin for the active Twilio provider')
+        if twilio_required and not self.twilio_validate_signature:
+            errors.append('TWILIO signature validation must remain enabled')
+        if not 60 <= self.twilio_max_call_seconds <= 3600:
+            errors.append('TWILIO_MAX_CALL_SECONDS must be between 60 and 3600')
         outbound_url = f'{public_origin}/api/telephony/twilio/outbound' if public_origin else ''
         gather_url = f'{public_origin}/api/telephony/twilio/gather' if public_origin else ''
         status_callback_url = f'{public_origin}/api/telephony/twilio/status' if public_origin else ''
 
-        # Twilio --------------------------------------------------------------------------------
-        from_number = normalize_e164(self.twilio_from_number, self.default_country_code) or ''
-        if self.twilio_from_number and not from_number:
-            errors.append('TWILIO_FROM_NUMBER must be a valid E.164 number')
-        if self.twilio_test_to and not normalize_e164(self.twilio_test_to, self.default_country_code):
-            errors.append('TWILIO_TEST_TO must be a valid phone number')
-        signature_verification = bool(self.twilio_auth_token and self.twilio_validate_signature)
-        if production_like and not self.twilio_enabled:
-            errors.append(f'APP_MODE={mode} requires TWILIO_ENABLED=true')
-        if self.twilio_enabled:
-            missing = [name for name, value in (('TWILIO_ACCOUNT_SID', self.twilio_account_sid),
-                                                ('TWILIO_AUTH_TOKEN', self.twilio_auth_token),
-                                                ('TWILIO_FROM_NUMBER', self.twilio_from_number),
-                                                ('PUBLIC_BASE_URL', self.public_base_url)) if not value]
-            if missing:
-                errors.append('TWILIO_ENABLED=true requires ' + ', '.join(missing))
-            if not signature_verification:
-                message = 'TWILIO signature validation is not configured'
-                (errors if production_like else warnings).append(message)
+        # GSM/LTE gateway (rendered into pjsip.conf by scripts/asterisk/render_config.py) -----------------
+        gateway_warnings: list[str] = []
+        if self.gsm_gateway_mode not in GATEWAY_MODES:
+            errors.append(f'GSM_GATEWAY_MODE must be one of {", ".join(GATEWAY_MODES)}')
+        if not 1 <= self.gsm_gateway_port <= 65535:
+            errors.append('GSM_GATEWAY_PORT must be between 1 and 65535')
+        codecs = [c.strip().lower() for c in self.gsm_gateway_codecs.split(',') if c.strip()]
+        if not codecs or any(c not in SIP_CODECS for c in codecs):
+            errors.append(f'GSM_GATEWAY_CODECS must be a comma-separated subset of {", ".join(SIP_CODECS)}')
+        if self.gsm_gateway_dtmf_mode not in DTMF_MODES:
+            errors.append(f'GSM_GATEWAY_DTMF_MODE must be one of {", ".join(DTMF_MODES)}')
+        if self.gsm_gateway_host and not _HOST.match(self.gsm_gateway_host):
+            errors.append('GSM_GATEWAY_HOST must be a bare host name or IP address')
+        if self.gsm_gateway_mode == 'static' and not self.gsm_gateway_host:
+            gateway_warnings.append('GSM_GATEWAY_HOST is required for GSM_GATEWAY_MODE=static')
+        if self.gsm_gateway_mode == 'register':
+            if not self.gsm_gateway_sip_user or not self.gsm_gateway_sip_password:
+                gateway_warnings.append('GSM_GATEWAY_SIP_USER and GSM_GATEWAY_SIP_PASSWORD are required for '
+                                        'GSM_GATEWAY_MODE=register (the gateway authenticates to Asterisk)')
+            elif len(self.gsm_gateway_sip_password) < 12 or self.gsm_gateway_sip_password.lower() in WEAK_SECRETS:
+                gateway_warnings.append('GSM_GATEWAY_SIP_PASSWORD is weak (use 12+ random characters)')
+        if not (1024 <= self.asterisk_rtp_start < self.asterisk_rtp_end <= 65535) or self.asterisk_rtp_start % 2:
+            errors.append('ASTERISK_RTP_START must be even and lower than ASTERISK_RTP_END (1024-65535)')
+        warnings.extend(f'gateway: {w}' for w in gateway_warnings)
+
+        # Where Asterisk fetches dynamic Fish audio --------------------------------------------------------
+        fastapi_base_url, base_error = parse_http_origin(self.fastapi_base_url, 'FASTAPI_BASE_URL')
+        if base_error:
+            errors.append(base_error)
+        if self.asterisk_enabled and self.fish_speech_live_synthesis and not fastapi_base_url:
+            errors.append('FISH_SPEECH_LIVE_SYNTHESIS=true with Asterisk requires FASTAPI_BASE_URL (Asterisk fetches '
+                          'dynamic Fish audio from it)')
+
+        # Speech recognition -------------------------------------------------------------------------------
+        if self.stt_provider not in STT_PROVIDERS:
+            errors.append(f'STT_PROVIDER must be one of {", ".join(STT_PROVIDERS)}')
+        elif self.stt_provider == 'disabled' and (production_like or self.asterisk_enabled):
+            (errors if production_like else warnings).append(
+                'STT_PROVIDER=disabled: the receptionist cannot understand callers')
+        if not 3 <= self.stt_record_max_seconds <= 60:
+            errors.append('STT_RECORD_MAX_SECONDS must be between 3 and 60')
+        if not 1 <= self.stt_record_max_silence_seconds <= 10:
+            errors.append('STT_RECORD_MAX_SILENCE_SECONDS must be between 1 and 10')
 
         # PostgreSQL ------------------------------------------------------------------------------
         if not self.database_url:
@@ -314,7 +530,7 @@ class Settings(BaseSettings):
 
         # Fish Speech -------------------------------------------------------------------------------
         if not self.fish_speech_enabled:
-            (errors if production_like or self.twilio_enabled else warnings).append(
+            (errors if production_like or self.asterisk_enabled or twilio_required else warnings).append(
                 'FISH_SPEECH_ENABLED=false: Fish Speech is the required TTS engine for calls')
         if self.fish_speech_channels != 1:
             errors.append('FISH_SPEECH_CHANNELS must be 1 (mono telephone audio)')
@@ -344,6 +560,9 @@ class Settings(BaseSettings):
                 allowed.append(normalized)
             else:
                 errors.append('OUTBOUND_ALLOWED_DESTINATIONS entries must be E.164 numbers (+CC...)')
+        if self.live_call_allowed and production_like and not allowed:
+            warnings.append('LIVE_CALL_ALLOWED=true without OUTBOUND_ALLOWED_DESTINATIONS: consent, do-not-call and '
+                            'opt-out rules are the only destination controls')
 
         # Security -----------------------------------------------------------------------------------------
         weak_jwt = self.jwt_secret in WEAK_SECRETS or len(self.jwt_secret) < 32
@@ -358,10 +577,13 @@ class Settings(BaseSettings):
                             'for the clinic team to confirm')
         return ResolvedConfig(
             app_mode=mode, production_like=production_like, twilio_enabled=self.twilio_enabled,
-            public_origin=public_origin, outbound_url=outbound_url, gather_url=gather_url,
-            status_callback_url=status_callback_url, from_number=from_number,
-            allowed_destinations=allowed, quota_seconds=quota, signature_verification=signature_verification,
+            asterisk_enabled=self.asterisk_enabled,
+            live_call_allowed=self.live_call_allowed, ari_base_url=ari_base_url, ari_events_url=ari_events_url,
+            sip_endpoint=self.asterisk_sip_endpoint, caller_id=caller_id, fastapi_base_url=fastapi_base_url,
+            public_origin=public_origin, from_number=from_number, outbound_url=outbound_url, gather_url=gather_url,
+            status_callback_url=status_callback_url, allowed_destinations=allowed, quota_seconds=quota,
             errors=errors, warnings=warnings,
+            gateway_warnings=gateway_warnings,
         )
 
     def validate_live(self) -> list[str]:

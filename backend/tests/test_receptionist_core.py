@@ -61,6 +61,11 @@ def test_clean_production_configuration_has_no_errors():
     assert cfg.quota_seconds == 180000 and cfg.from_number == FROM_NUMBER
 
 
+def test_legacy_provider_keeps_its_explicit_asterisk_requirement():
+    cfg = Settings(_env_file=None, app_mode='production', call_provider='asterisk').resolve()
+    assert any('requires ASTERISK_ENABLED=true' in error for error in cfg.errors)
+
+
 @pytest.mark.parametrize('overrides,fragment', [
     ({'twilio_enabled': False}, 'requires TWILIO_ENABLED=true'),
     ({'twilio_account_sid': ''}, 'TWILIO_ACCOUNT_SID'),

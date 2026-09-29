@@ -1,4 +1,6 @@
-# Mouth Care Solutions AI Receptionist
+# Mouth Care Solutions AI Outbound Dental Receptionist
+
+AI-powered outbound dental receptionist using Twilio Voice, Fish Speech, FastAPI, and PostgreSQL.
 
 FastAPI, Twilio Voice (speech recognised by `<Gather>`), PostgreSQL, and a reference-conditioned Fish Speech voice pack for a dental receptionist.
 

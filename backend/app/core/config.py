@@ -456,7 +456,8 @@ class Settings(BaseSettings):
         public_origin, public_error = parse_public_origin(self.public_base_url, 'PUBLIC_BASE_URL')
         if public_error:
             (errors if twilio_required else warnings).append(public_error)
-        from_number = normalize_e164(self.twilio_from_number, self.default_country_code) if self.twilio_from_number else ''
+        from_number = (normalize_e164(self.twilio_from_number, self.default_country_code)
+                   if self.twilio_from_number else '') or ''
         if twilio_required and not self.twilio_account_sid:
             errors.append('TWILIO_ACCOUNT_SID is required for the active Twilio provider')
         if twilio_required and not self.twilio_auth_token:
